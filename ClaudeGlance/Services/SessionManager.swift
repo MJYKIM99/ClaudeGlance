@@ -23,6 +23,25 @@ struct DayStats: Codable, Identifiable {
     let dateString: String  // "yyyy-MM-dd"
     var toolCalls: Int
     var sessionsCount: Int
+    var toolBreakdown: [String: Int]
+    var totalDurationSeconds: Int
+
+    init(dateString: String, toolCalls: Int = 0, sessionsCount: Int = 0, toolBreakdown: [String: Int] = [:], totalDurationSeconds: Int = 0) {
+        self.dateString = dateString
+        self.toolCalls = toolCalls
+        self.sessionsCount = sessionsCount
+        self.toolBreakdown = toolBreakdown
+        self.totalDurationSeconds = totalDurationSeconds
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        dateString = try container.decode(String.self, forKey: .dateString)
+        toolCalls = try container.decode(Int.self, forKey: .toolCalls)
+        sessionsCount = try container.decode(Int.self, forKey: .sessionsCount)
+        toolBreakdown = try container.decodeIfPresent([String: Int].self, forKey: .toolBreakdown) ?? [:]
+        totalDurationSeconds = try container.decodeIfPresent(Int.self, forKey: .totalDurationSeconds) ?? 0
+    }
 
     static var todayString: String {
         let formatter = DateFormatter()
@@ -35,6 +54,8 @@ struct DayStats: Codable, Identifiable {
 struct TodayStats {
     var toolCalls: Int = 0
     var sessionsCount: Int = 0
+    var toolBreakdown: [String: Int] = [:]
+    var totalDurationSeconds: Int = 0
     var lastReset: Date = Date()
 
     mutating func incrementToolCalls() {
@@ -47,11 +68,23 @@ struct TodayStats {
         sessionsCount += 1
     }
 
+    mutating func incrementTool(_ name: String) {
+        checkAndResetIfNewDay()
+        toolBreakdown[name, default: 0] += 1
+    }
+
+    mutating func addDuration(_ seconds: Int) {
+        checkAndResetIfNewDay()
+        totalDurationSeconds += seconds
+    }
+
     private mutating func checkAndResetIfNewDay() {
         let calendar = Calendar.current
         if !calendar.isDateInToday(lastReset) {
             toolCalls = 0
             sessionsCount = 0
+            toolBreakdown = [:]
+            totalDurationSeconds = 0
             lastReset = Date()
         }
     }
@@ -74,6 +107,7 @@ class SessionManager: ObservableObject {
     // 记录每个会话的最后 Stop 时间，用于 5 秒静默期
     private var sessionStopTimes: [String: Date] = [:]
     private var lastNotificationTime: [NotificationSoundType: Date] = [:]
+    private var sessionStartTimes: [String: Date] = [:]
 
     private var cleanupTimer: Timer?
     private var fadeTimer: Timer?
@@ -135,9 +169,9 @@ class SessionManager: ObservableObject {
         // 更新 weeklyStats 中今天的条目
         let today = DayStats.todayString
         if let idx = weeklyStats.firstIndex(where: { $0.dateString == today }) {
-            weeklyStats[idx] = DayStats(dateString: today, toolCalls: todayStats.toolCalls, sessionsCount: todayStats.sessionsCount)
+            weeklyStats[idx] = DayStats(dateString: today, toolCalls: todayStats.toolCalls, sessionsCount: todayStats.sessionsCount, toolBreakdown: todayStats.toolBreakdown, totalDurationSeconds: todayStats.totalDurationSeconds)
         } else {
-            weeklyStats.append(DayStats(dateString: today, toolCalls: todayStats.toolCalls, sessionsCount: todayStats.sessionsCount))
+            weeklyStats.append(DayStats(dateString: today, toolCalls: todayStats.toolCalls, sessionsCount: todayStats.sessionsCount, toolBreakdown: todayStats.toolBreakdown, totalDurationSeconds: todayStats.totalDurationSeconds))
         }
 
         pruneWeeklyStats()
@@ -156,9 +190,9 @@ class SessionManager: ObservableObject {
     private func syncTodayFromWeekly() {
         let today = DayStats.todayString
         if let todayEntry = weeklyStats.first(where: { $0.dateString == today }) {
-            todayStats = TodayStats(toolCalls: todayEntry.toolCalls, sessionsCount: todayEntry.sessionsCount, lastReset: Date())
+            todayStats = TodayStats(toolCalls: todayEntry.toolCalls, sessionsCount: todayEntry.sessionsCount, toolBreakdown: todayEntry.toolBreakdown, totalDurationSeconds: todayEntry.totalDurationSeconds, lastReset: Date())
         } else {
-            todayStats = TodayStats(toolCalls: 0, sessionsCount: 0, lastReset: Date())
+            todayStats = TodayStats(toolCalls: 0, sessionsCount: 0, toolBreakdown: [:], totalDurationSeconds: 0, lastReset: Date())
         }
     }
 
@@ -198,6 +232,7 @@ class SessionManager: ObservableObject {
         // 统计唯一会话数
         if !recordedSessionKeys.contains(sessionKey) {
             recordedSessionKeys.insert(sessionKey)
+            sessionStartTimes[sessionKey] = Date()
             todayStats.incrementSessions()
             saveTodayStats()
         }
@@ -273,6 +308,7 @@ class SessionManager: ObservableObject {
 
             // 统计工具调用
             todayStats.incrementToolCalls()
+            todayStats.incrementTool(tool)
             saveTodayStats()
 
         case "PostToolUse":
@@ -343,6 +379,14 @@ class SessionManager: ObservableObject {
 
                 // 记录 Stop 时间，用于过滤后续的预测操作
                 sessionStopTimes[sessionKey] = Date()
+
+                // 统计会话持续时间
+                if let startTime = sessionStartTimes[sessionKey] {
+                    let duration = Int(Date().timeIntervalSince(startTime))
+                    todayStats.addDuration(duration)
+                    sessionStartTimes.removeValue(forKey: sessionKey)
+                    saveTodayStats()
+                }
                 print("Session completed: \(sessionKey), recorded stop time")
 
                 // 任务完成时播放提示音
@@ -411,6 +455,7 @@ class SessionManager: ObservableObject {
     func dismissSession(sessionId: String) {
         sessions.removeValue(forKey: sessionId)
         sessionStopTimes.removeValue(forKey: sessionId)
+        sessionStartTimes.removeValue(forKey: sessionId)
         updateActiveSessions()
         print("Dismissed session: \(sessionId)")
     }
@@ -599,6 +644,7 @@ class SessionManager: ObservableObject {
         for key in sessionsToRemove {
             sessions.removeValue(forKey: key)
             sessionStopTimes.removeValue(forKey: key)
+            sessionStartTimes.removeValue(forKey: key)
         }
 
         updateActiveSessions()

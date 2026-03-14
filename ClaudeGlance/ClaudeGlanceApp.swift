@@ -104,6 +104,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         sessionsStatsItem.isEnabled = false
         menu.addItem(sessionsStatsItem)
 
+        let topToolsItem = NSMenuItem(title: "  Top: —", action: nil, keyEquivalent: "")
+        topToolsItem.tag = 103
+        topToolsItem.isEnabled = false
+        menu.addItem(topToolsItem)
+
+        let durationItem = NSMenuItem(title: "  Active Time: —", action: nil, keyEquivalent: "")
+        durationItem.tag = 104
+        durationItem.isEnabled = false
+        menu.addItem(durationItem)
+
         // 7 天趋势
         menu.addItem(NSMenuItem.separator())
 
@@ -311,6 +321,31 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
         if let sessionsItem = menu.item(withTag: 102) {
             sessionsItem.title = "  Sessions: \(stats.sessionsCount)"
+        }
+
+        if let topToolsItem = menu.item(withTag: 103) {
+            let top3 = stats.toolBreakdown.sorted { $0.value > $1.value }.prefix(3)
+            if top3.isEmpty {
+                topToolsItem.title = "  Top: —"
+            } else {
+                let parts = top3.map { "\($0.key)(\($0.value))" }
+                topToolsItem.title = "  Top: \(parts.joined(separator: " "))"
+            }
+        }
+
+        if let durationItem = menu.item(withTag: 104) {
+            let total = stats.totalDurationSeconds
+            if total <= 0 {
+                durationItem.title = "  Active Time: —"
+            } else {
+                let hours = total / 3600
+                let minutes = (total % 3600) / 60
+                if hours > 0 {
+                    durationItem.title = "  Active Time: \(hours)h \(minutes)m"
+                } else {
+                    durationItem.title = "  Active Time: \(minutes)m"
+                }
+            }
         }
     }
 
