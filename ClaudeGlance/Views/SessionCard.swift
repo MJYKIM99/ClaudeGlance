@@ -133,8 +133,29 @@ struct SessionCard: View {
             }
         )
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .opacity(session.calculatedOpacity)
-        .animation(.easeOut(duration: 0.5), value: session.calculatedOpacity)
+        .contextMenu {
+            Button("Copy Session ID") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(session.id, forType: .string)
+            }
+            Button("Copy Project Path") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(session.cwd, forType: .string)
+            }
+            Button("Open in Finder") {
+                NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: session.cwd)
+            }
+            if !session.transcriptPath.isEmpty {
+                Divider()
+                Button("View Transcript") {
+                    NSWorkspace.shared.open(URL(fileURLWithPath: session.transcriptPath))
+                }
+            }
+            Divider()
+            Button("Dismiss") {
+                onDismiss?()
+            }
+        }
         .onChange(of: session.status) { oldValue, newValue in
             // 状态转换动画
             withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
@@ -256,6 +277,14 @@ struct TerminalBadge: View {
             return "VS"
         case let t where t.contains("cursor"):
             return "Cu"
+        case let t where t.contains("apple_terminal"):
+            return "Tm"
+        case let t where t.contains("ghostty"):
+            return "Gh"
+        case let t where t.contains("wezterm"):
+            return "Wz"
+        case let t where t.contains("zed"):
+            return "Zd"
         default:
             return "T"
         }
@@ -271,6 +300,14 @@ struct TerminalBadge: View {
             return .blue
         case let t where t.contains("cursor"):
             return .cyan
+        case let t where t.contains("apple_terminal"):
+            return .mint
+        case let t where t.contains("ghostty"):
+            return .indigo
+        case let t where t.contains("wezterm"):
+            return .teal
+        case let t where t.contains("zed"):
+            return .orange
         default:
             return .gray
         }

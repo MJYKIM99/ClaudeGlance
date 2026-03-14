@@ -214,6 +214,9 @@ class SessionManager: ObservableObject {
         session.terminal = message.terminal
         session.project = message.project
         session.cwd = message.cwd
+        if let tp = message.data.transcriptPath, !tp.isEmpty {
+            session.transcriptPath = tp
+        }
 
         switch message.event {
         case "PreToolUse":

@@ -45,6 +45,7 @@ struct SessionState: Identifiable, Codable {
     // 用于渐隐动画
     var opacity: Double = 1.0
     var isExpanded: Bool = false
+    var transcriptPath: String = ""
 
     // 延迟显示：新会话需要等待一段时间才显示（过滤快速的预测操作）
     var displayAfter: Date = Date()
