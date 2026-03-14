@@ -46,6 +46,9 @@ A native macOS application that provides a real-time floating HUD (Heads-Up Disp
 - **Service Status Monitoring** - Built-in service health indicator in menu bar
 - **Menu Bar Session Badge** - Active session count displayed on the menu bar icon
 - **7-Day Statistics** - Rolling weekly stats with sparkline trend in menu bar dropdown
+- **Tool Breakdown & Duration** - Per-tool call counts (Top 3) and cumulative active time in menu bar
+- **macOS Notification Center** - System notification banners when Claude needs input or completes a task
+- **Session Context Menu** - Right-click cards to copy session ID, project path, open in Finder, or view transcript
 - **Code Rain Effect** - Matrix-style particle animation on idle HUD
 - **Clickable Project Path** - Click project name in session card to open in Finder
 - **HUD Opacity Control** - Adjustable HUD transparency
@@ -242,7 +245,7 @@ Claude Glance uses Claude Code's hooks API to receive real-time status updates. 
 
 ### Which terminals are supported?
 
-Any terminal that runs Claude Code CLI: Terminal.app, iTerm2, Warp, VS Code terminal, Cursor, etc.
+Any terminal that runs Claude Code CLI: Terminal.app, iTerm2, Warp, VS Code terminal, Cursor, Ghostty, WezTerm, Zed, etc.
 
 ### Why is the HUD not showing any sessions?
 
@@ -301,6 +304,9 @@ Created by **Kim**
 - **服务状态监控** - 菜单栏显示服务健康状态
 - **菜单栏会话徽标** - 菜单栏图标上显示活跃会话数
 - **7 天统计趋势** - 菜单栏下拉中显示 sparkline 周趋势
+- **工具分布与时长** - 菜单栏显示 Top 3 工具调用分布和累计活跃时长
+- **macOS 通知中心** - Claude 需要输入或完成任务时推送系统通知
+- **会话右键菜单** - 右键卡片可复制会话 ID、项目路径、打开 Finder 或查看对话记录
 - **代码雨特效** - 空闲时 HUD 显示 Matrix 风格粒子动画
 - **可点击项目路径** - 点击会话卡片项目名在 Finder 中打开
 - **HUD 透明度控制** - 可调节 HUD 透明度
