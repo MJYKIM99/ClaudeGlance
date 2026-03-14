@@ -15,12 +15,6 @@ struct PixelSpinner: View {
     private let gridSize = 4
     private let pixelGap: CGFloat = 2
 
-    @State private var pixelStates: [[Double]] = Array(
-        repeating: Array(repeating: 0.3, count: 4),
-        count: 4
-    )
-    @State private var animationPhase: Double = 0
-
     private var baseColor: Color {
         switch status {
         case .idle:

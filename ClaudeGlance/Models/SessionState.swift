@@ -49,7 +49,7 @@ struct SessionState: Identifiable, Codable {
     var displayAfter: Date = Date()
 
     // MARK: - Timeout Constants
-    private static let completedTimeout: TimeInterval = 30      // completed/error 状态 30 秒后消失
+    private static let completedTimeout: TimeInterval = 5       // completed/error 状态 5 秒后移除
     private static let waitingTimeout: TimeInterval = 90        // waiting 状态 90 秒后自动视为结束
     private static let activeTimeout: TimeInterval = 60         // thinking/reading/writing 60秒无更新后消失
     private static let longOperationThreshold: TimeInterval = 30 // 超过 30 秒视为长时间操作

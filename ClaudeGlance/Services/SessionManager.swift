@@ -409,6 +409,7 @@ class SessionManager: ObservableObject {
     // MARK: - Dismiss Session (手动关闭僵尸会话)
     func dismissSession(sessionId: String) {
         sessions.removeValue(forKey: sessionId)
+        sessionStopTimes.removeValue(forKey: sessionId)
         updateActiveSessions()
         print("Dismissed session: \(sessionId)")
     }
@@ -588,6 +589,7 @@ class SessionManager: ObservableObject {
 
         for key in sessionsToRemove {
             sessions.removeValue(forKey: key)
+            sessionStopTimes.removeValue(forKey: key)
         }
 
         updateActiveSessions()

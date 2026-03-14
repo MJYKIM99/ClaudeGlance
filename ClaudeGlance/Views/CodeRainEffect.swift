@@ -8,6 +8,8 @@
 import SwiftUI
 
 struct CodeRainEffect: View {
+    var isAnimating: Bool = true
+
     @State private var particles: [CodeParticle] = []
     @State private var canvasSize: CGSize = .zero
     private let maxParticles = 30
@@ -16,7 +18,28 @@ struct CodeRainEffect: View {
 
     var body: some View {
         GeometryReader { geo in
-            TimelineView(.animation(minimumInterval: 0.05)) { timeline in
+            if isAnimating {
+                TimelineView(.animation(minimumInterval: 0.05)) { timeline in
+                    Canvas { context, size in
+                        for particle in particles {
+                            let text = Text(particle.character)
+                                .font(.system(size: particle.size, design: .monospaced))
+                                .foregroundColor(.green)
+
+                            context.opacity = particle.opacity
+                            context.draw(
+                                text,
+                                at: CGPoint(x: particle.x, y: particle.y)
+                            )
+                        }
+                    }
+                    .onChange(of: timeline.date) { _, _ in
+                        updateParticles()
+                    }
+                }
+                .onAppear { canvasSize = geo.size }
+                .onChange(of: geo.size) { _, newSize in canvasSize = newSize }
+            } else {
                 Canvas { context, size in
                     for particle in particles {
                         let text = Text(particle.character)
@@ -30,12 +53,7 @@ struct CodeRainEffect: View {
                         )
                     }
                 }
-                .onChange(of: timeline.date) { _, _ in
-                    updateParticles()
-                }
             }
-            .onAppear { canvasSize = geo.size }
-            .onChange(of: geo.size) { _, newSize in canvasSize = newSize }
         }
     }
 

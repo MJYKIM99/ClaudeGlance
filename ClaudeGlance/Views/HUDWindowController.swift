@@ -286,7 +286,7 @@ struct HUDContentView: View {
                 .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
 
             if sessionManager.activeSessions.isEmpty {
-                CodeRainEffect()
+                CodeRainEffect(isAnimating: windowVisibility.isVisible)
                     .opacity(windowVisibility.isVisible ? 0.6 : 0)
             } else {
                 VStack(spacing: 8) {
