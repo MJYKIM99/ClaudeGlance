@@ -42,8 +42,6 @@ struct SessionState: Identifiable, Codable {
     var lastUpdate: Date
     var toolHistory: [ToolEvent]
 
-    // 用于渐隐动画
-    var opacity: Double = 1.0
     var isExpanded: Bool = false
     var transcriptPath: String = ""
 
@@ -111,17 +109,6 @@ struct SessionState: Identifiable, Codable {
         let elapsed = Date().timeIntervalSince(lastUpdate)
         let remaining = Self.waitingTimeout - elapsed
         return remaining > 0 ? Int(remaining) : 0
-    }
-
-    // 计算会话是否正在消失（完成后 5 秒开始渐隐）
-    var isFading: Bool {
-        guard status == .completed else { return false }
-        return Date().timeIntervalSince(lastUpdate) > 5
-    }
-
-    // 透明度（不再渐变，直接消失由 SessionManager 处理）
-    var calculatedOpacity: Double {
-        return 1.0
     }
 
     init(
@@ -235,6 +222,8 @@ enum AnyCodableValue: Codable {
     case int(Int)
     case double(Double)
     case bool(Bool)
+    case array([AnyCodableValue])
+    case object([String: AnyCodableValue])
     case null
 
     init(from decoder: Decoder) throws {
@@ -248,6 +237,10 @@ enum AnyCodableValue: Codable {
             self = .double(doubleValue)
         } else if let boolValue = try? container.decode(Bool.self) {
             self = .bool(boolValue)
+        } else if let arrayValue = try? container.decode([AnyCodableValue].self) {
+            self = .array(arrayValue)
+        } else if let objectValue = try? container.decode([String: AnyCodableValue].self) {
+            self = .object(objectValue)
         } else if container.decodeNil() {
             self = .null
         } else {
@@ -262,6 +255,8 @@ enum AnyCodableValue: Codable {
         case .int(let value): try container.encode(value)
         case .double(let value): try container.encode(value)
         case .bool(let value): try container.encode(value)
+        case .array(let value): try container.encode(value)
+        case .object(let value): try container.encode(value)
         case .null: try container.encodeNil()
         }
     }

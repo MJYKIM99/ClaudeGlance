@@ -363,28 +363,11 @@ class SessionManager: ObservableObject {
 
     // MARK: - Fade Animation
     private func updateFadingSessions() {
-        var needsUpdate = false
-
-        for (key, session) in sessions {
-            // 更新完成状态的透明度
-            if session.status == .completed {
-                let newOpacity = session.calculatedOpacity
-                if sessions[key]?.opacity != newOpacity {
-                    sessions[key]?.opacity = newOpacity
-                    needsUpdate = true
-                }
-            }
-        }
-
-        // 检查是否有需要更新 UI 的状态
+        // 检查是否有需要更新 UI 的状态（长时间 thinking/waiting 倒计时）
         let hasStillThinking = sessions.values.contains { $0.isStillThinking }
         let hasStillWaiting = sessions.values.contains { $0.isStillWaiting }
 
         if hasStillThinking || hasStillWaiting {
-            needsUpdate = true
-        }
-
-        if needsUpdate {
             updateActiveSessions()
         }
 
@@ -396,10 +379,8 @@ class SessionManager: ObservableObject {
     private func updateFadeTimerState() {
         let needsFadeTimer = sessions.values.contains { session in
             // 需要 fadeTimer 的情况：
-            // 1. completed 状态（渐隐动画）
-            // 2. 长时间 thinking（显示 Still thinking...）
-            // 3. 长时间 waiting（显示倒计时）
-            session.status == .completed ||
+            // 1. 长时间 thinking（显示 Still thinking...）
+            // 2. 长时间 waiting（显示倒计时）
             session.isStillThinking ||
             session.isStillWaiting
         }
@@ -614,7 +595,7 @@ class SessionManager: ObservableObject {
 
     private func updateActiveSessions() {
         activeSessions = sessions.values
-            .filter { $0.isActive && $0.isReadyToDisplay && $0.calculatedOpacity > 0 }  // 过滤掉未到显示时间和已完全透明的会话
+            .filter { $0.isActive && $0.isReadyToDisplay }
             .sorted { $0.lastUpdate > $1.lastUpdate }
 
         // 检查是否需要启动/停止 fadeTimer
