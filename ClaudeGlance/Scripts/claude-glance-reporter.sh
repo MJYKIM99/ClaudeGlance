@@ -74,8 +74,11 @@ main() {
     local cwd
     cwd=$(pwd)
 
+    # ms timestamp; macOS BSD date does not support %3N, so use python3
+    # (already required by this script). Fallback to seconds * 1000.
     local timestamp
-    timestamp=$(date +%s%3N 2>/dev/null || date +%s)
+    timestamp=$(python3 -c 'import time; print(int(time.time()*1000))' 2>/dev/null \
+                || echo "$(date +%s)000")
 
     # 构建 JSON payload（通过环境变量传入 python3 安全编码）
     if ! command -v python3 &>/dev/null; then
