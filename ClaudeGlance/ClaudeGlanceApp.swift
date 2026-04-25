@@ -27,14 +27,21 @@ struct ClaudeGlanceApp: App {
 class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     var statusItem: NSStatusItem?
     var hudWindowController: HUDWindowController?
+    var browOverlayWindow: BrowOverlayWindow?
     var settingsWindowController: SettingsWindowController?
     let sessionManager = SessionManager()
     let ipcServer = IPCServer()
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        UserDefaults.standard.register(defaults: [
+            "browAutoPeekEnabled": true
+        ])
+
         setupMenuBar()
         setupHUDWindow()
+        setupBrowOverlayIfEnabled()
+        observeDisplayChanges()
 
         // 自动安装 hook 脚本（在启动服务之前）
         autoInstallHookIfNeeded()
@@ -87,6 +94,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
         menu.addItem(NSMenuItem(title: "Show HUD", action: #selector(showHUD), keyEquivalent: "h"))
         menu.addItem(NSMenuItem(title: "Hide HUD", action: #selector(hideHUD), keyEquivalent: ""))
+
+        let browItem = NSMenuItem(title: "Notch HUD (Experimental)", action: #selector(toggleBrowOverlay), keyEquivalent: "n")
+        browItem.tag = 400
+        browItem.state = UserDefaults.standard.bool(forKey: "browHUDEnabled") ? .on : .off
+        menu.addItem(browItem)
+
+        let autoPeekItem = NSMenuItem(title: "  Auto Expand on Activity", action: #selector(toggleBrowAutoPeek), keyEquivalent: "")
+        autoPeekItem.tag = 401
+        autoPeekItem.state = UserDefaults.standard.bool(forKey: "browAutoPeekEnabled") ? .on : .off
+        menu.addItem(autoPeekItem)
+
         menu.addItem(NSMenuItem.separator())
 
         // 今日统计
@@ -391,6 +409,93 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         hudWindowController?.showWindow(nil)
     }
 
+    // MARK: - Brow HUD (experimental)
+    private func setupBrowOverlayIfEnabled() {
+        let enabled = UserDefaults.standard.bool(forKey: "browHUDEnabled")
+        NSLog("[ClaudeGlance][Brow] setupBrowOverlayIfEnabled: enabled=%@",
+              enabled ? "YES" : "NO")
+        guard enabled else { return }
+        rebuildBrowOverlay()
+        suppressFloatingHUD()
+    }
+
+    /// While the ledge overlay is active the floating ball would be a
+    /// duplicate surface, so hide it. `manuallyHidden` keeps the auto-
+    /// show-on-new-session logic from popping it back up.
+    private func suppressFloatingHUD() {
+        hudWindowController?.manuallyHidden = true
+        hudWindowController?.window?.orderOut(nil)
+    }
+
+    private func restoreFloatingHUD() {
+        hudWindowController?.manuallyHidden = false
+        hudWindowController?.window?.orderFront(nil)
+    }
+
+    private func rebuildBrowOverlay() {
+        browOverlayWindow?.hide()
+        browOverlayWindow = nil
+
+        // Host on the cursor's current display; the window then follows
+        // the mouse across displays on its own.
+        let mouse = NSEvent.mouseLocation
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) })
+            ?? NSScreen.internalOrMain
+        guard let screen = screen else {
+            NSLog("[ClaudeGlance][Brow] ❌ No screen available")
+            return
+        }
+        NSLog("[ClaudeGlance][Brow] Building overlay on screen frame=%@ hasLedge=%@",
+              NSStringFromRect(screen.frame),
+              screen.hasHardwareLedge ? "YES" : "NO")
+        let overlay = BrowOverlayWindow(sessionManager: sessionManager, screen: screen)
+        overlay.show()
+        browOverlayWindow = overlay
+        NSLog("[ClaudeGlance][Brow] ✅ Overlay shown. window=%@",
+              String(describing: overlay.window))
+    }
+
+    private func observeDisplayChanges() {
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self = self,
+                  UserDefaults.standard.bool(forKey: "browHUDEnabled") else { return }
+            // Debounce so display sleep/wake transitions settle first.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.rebuildBrowOverlay()
+            }
+        }
+    }
+
+    @objc func toggleBrowAutoPeek() {
+        let enabled = !UserDefaults.standard.bool(forKey: "browAutoPeekEnabled")
+        UserDefaults.standard.set(enabled, forKey: "browAutoPeekEnabled")
+        NSLog("[ClaudeGlance][Brow] toggleBrowAutoPeek -> %@", enabled ? "ON" : "OFF")
+        if let item = statusItem?.menu?.item(withTag: 401) {
+            item.state = enabled ? .on : .off
+        }
+    }
+
+    @objc func toggleBrowOverlay() {
+        let enabled = !UserDefaults.standard.bool(forKey: "browHUDEnabled")
+        UserDefaults.standard.set(enabled, forKey: "browHUDEnabled")
+        NSLog("[ClaudeGlance][Brow] toggleBrowOverlay -> %@", enabled ? "ON" : "OFF")
+        if enabled {
+            rebuildBrowOverlay()
+            suppressFloatingHUD()
+        } else {
+            browOverlayWindow?.hide()
+            browOverlayWindow = nil
+            restoreFloatingHUD()
+        }
+        if let item = statusItem?.menu?.item(withTag: 400) {
+            item.state = enabled ? .on : .off
+        }
+    }
+
     // MARK: - IPC Server
     private func startIPCServer() {
         ipcServer.onMessage = { [weak self] data in
@@ -406,42 +511,52 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     // MARK: - Auto Install Hook
     private func autoInstallHookIfNeeded() {
-        guard let scriptContent = HookInstaller.bundledScriptContent() else {
-            print("Hook script not found in bundle, skipping auto-install")
+        NSLog("[ClaudeGlance] autoInstallHookIfNeeded() starting")
+        guard let bundledURL = HookInstaller.bundledScriptURL() else {
+            NSLog("[ClaudeGlance] ❌ Hook script NOT found in bundle. Bundle resourcePath=%@",
+                  Bundle.main.resourcePath ?? "nil")
             return
         }
+        NSLog("[ClaudeGlance] ✅ Bundled script: %@", bundledURL.path)
 
-        let hooksDir = NSString(string: "~/.claude/hooks").expandingTildeInPath
-        let targetPath = (hooksDir as NSString).appendingPathComponent("claude-glance-reporter.sh")
+        let targetPath = HookInstaller.installedScriptPath
         let settingsPath = NSString(string: "~/.claude/settings.json").expandingTildeInPath
+        NSLog("[ClaudeGlance] Target hook path: %@", targetPath)
+        NSLog("[ClaudeGlance] Target settings path: %@", settingsPath)
 
         do {
-            try FileManager.default.createDirectory(atPath: hooksDir, withIntermediateDirectories: true)
-
-            // 1. 脚本更新：比较内容，有变化才写入
-            let needsScriptUpdate: Bool
-            if FileManager.default.fileExists(atPath: targetPath) {
-                let existingContent = try String(contentsOfFile: targetPath, encoding: .utf8)
-                needsScriptUpdate = (existingContent != scriptContent)
+            // 1. Script: prefer a symlink to the bundled script.
+            let needsScriptInstall: Bool
+            if HookInstaller.installedSymlinkPointsToBundle() {
+                needsScriptInstall = false
+                NSLog("[ClaudeGlance] Script is already a symlink to current bundle.")
+            } else if FileManager.default.fileExists(atPath: targetPath),
+                      let existing = try? String(contentsOfFile: targetPath, encoding: .utf8),
+                      existing == HookInstaller.bundledScriptContent() {
+                needsScriptInstall = false
+                NSLog("[ClaudeGlance] Script is plain file matching bundle.")
             } else {
-                needsScriptUpdate = true
+                needsScriptInstall = true
+                NSLog("[ClaudeGlance] Script needs (re)install.")
             }
 
-            if needsScriptUpdate {
-                try scriptContent.write(toFile: targetPath, atomically: true, encoding: .utf8)
-                try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: targetPath)
-                print("Hook script installed to: \(targetPath)")
+            if needsScriptInstall {
+                try HookInstaller.installScript()
+                NSLog("[ClaudeGlance] ✅ installScript() succeeded.")
             }
 
-            // 2. settings.json 校验：每次启动都检查，缺条目就补
-            if !HookInstaller.settingsHasAllHooks(at: settingsPath) {
+            // 2. settings.json validation — patch every launch if needed.
+            let missing = HookInstaller.missingHookTypes(at: settingsPath)
+            if !missing.isEmpty {
+                NSLog("[ClaudeGlance] settings.json missing hooks: %@. Repairing...",
+                      missing.joined(separator: ","))
                 try HookInstaller.updateSettingsJson(at: settingsPath)
-                print("Settings.json hooks repaired")
+                NSLog("[ClaudeGlance] ✅ settings.json hooks repaired.")
             } else {
-                print("Hook configuration verified")
+                NSLog("[ClaudeGlance] settings.json already has all hooks.")
             }
         } catch {
-            print("Failed to auto-install hook: \(error)")
+            NSLog("[ClaudeGlance] ❌ auto-install failed: %@", String(describing: error))
         }
     }
 
@@ -958,9 +1073,15 @@ struct HookChecker {
         diag.scriptExists = FileManager.default.fileExists(atPath: scriptPath)
         diag.scriptExecutable = FileManager.default.isExecutableFile(atPath: scriptPath)
 
-        if diag.scriptExists, let bundled = HookInstaller.bundledScriptContent() {
-            let existing = (try? String(contentsOfFile: scriptPath, encoding: .utf8)) ?? ""
-            diag.scriptMatchesBundle = (existing == bundled)
+        if diag.scriptExists {
+            // Up-to-date if it's a symlink to the current bundled script,
+            // OR a plain copy whose contents match.
+            if HookInstaller.installedSymlinkPointsToBundle() {
+                diag.scriptMatchesBundle = true
+            } else if let bundled = HookInstaller.bundledScriptContent() {
+                let existing = (try? String(contentsOfFile: scriptPath, encoding: .utf8)) ?? ""
+                diag.scriptMatchesBundle = (existing == bundled)
+            }
         }
 
         // 全局 settings.json 检查
@@ -1035,31 +1156,91 @@ struct HookInstaller {
         }
     }
 
-    // 从 Bundle 读取脚本内容（唯一来源）
-    static func bundledScriptContent() -> String? {
-        guard let url = Bundle.main.url(
+    // Bundled script in the .app — single source of truth.
+    // Synchronized file groups in Xcode 16 may flatten the Scripts/ folder
+    // into Resources/, so try the subdirectory first then fall back.
+    static func bundledScriptURL() -> URL? {
+        if let url = Bundle.main.url(
             forResource: "claude-glance-reporter",
             withExtension: "sh",
             subdirectory: "Scripts"
-        ) else { return nil }
+        ) {
+            return url
+        }
+        return Bundle.main.url(
+            forResource: "claude-glance-reporter",
+            withExtension: "sh"
+        )
+    }
+
+    static func bundledScriptContent() -> String? {
+        guard let url = bundledScriptURL() else { return nil }
         return try? String(contentsOf: url, encoding: .utf8)
     }
 
-    private static func performInstallation() throws {
-        guard let scriptContent = bundledScriptContent() else {
+    /// Installed hook path: ~/.claude/hooks/claude-glance-reporter.sh
+    static var installedScriptPath: String {
+        let hooksDir = NSString(string: "~/.claude/hooks").expandingTildeInPath
+        return (hooksDir as NSString).appendingPathComponent("claude-glance-reporter.sh")
+    }
+
+    /// True if the installed path is a symlink whose target equals the
+    /// current bundled script path. Auto-tracks app updates.
+    static func installedSymlinkPointsToBundle() -> Bool {
+        let path = installedScriptPath
+        guard let bundledURL = bundledScriptURL() else { return false }
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+              (attrs[.type] as? FileAttributeType) == .typeSymbolicLink,
+              let target = try? FileManager.default.destinationOfSymbolicLink(atPath: path) else {
+            return false
+        }
+        // Resolve relative symlinks to absolute for comparison.
+        let resolved = (target as NSString).standardizingPath
+        let bundlePath = (bundledURL.path as NSString).standardizingPath
+        return resolved == bundlePath ||
+            (resolved as NSString).resolvingSymlinksInPath ==
+            (bundlePath as NSString).resolvingSymlinksInPath
+    }
+
+    /// Install the hook script as a symlink to the bundled file. If
+    /// symlinking fails (sandboxed write denied, etc.) fall back to copy.
+    static func installScript() throws {
+        guard let bundledURL = bundledScriptURL() else {
             throw NSError(domain: "ClaudeGlance", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "Hook script not found in app bundle"])
         }
 
         let hooksDir = NSString(string: "~/.claude/hooks").expandingTildeInPath
-        let scriptPath = (hooksDir as NSString).appendingPathComponent("claude-glance-reporter.sh")
-        let settingsPath = NSString(string: "~/.claude/settings.json").expandingTildeInPath
+        let scriptPath = installedScriptPath
 
         try FileManager.default.createDirectory(atPath: hooksDir, withIntermediateDirectories: true)
 
-        try scriptContent.write(toFile: scriptPath, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: scriptPath)
+        // Remove any existing entry (regular file or stale symlink).
+        if FileManager.default.fileExists(atPath: scriptPath) ||
+            (try? FileManager.default.attributesOfItem(atPath: scriptPath)) != nil {
+            try? FileManager.default.removeItem(atPath: scriptPath)
+        }
 
+        do {
+            try FileManager.default.createSymbolicLink(
+                atPath: scriptPath,
+                withDestinationPath: bundledURL.path
+            )
+            // Ensure bundled script itself is executable.
+            try? FileManager.default.setAttributes([.posixPermissions: 0o755],
+                                                   ofItemAtPath: bundledURL.path)
+        } catch {
+            // Fallback: copy contents.
+            let content = try String(contentsOf: bundledURL, encoding: .utf8)
+            try content.write(toFile: scriptPath, atomically: true, encoding: .utf8)
+            try FileManager.default.setAttributes([.posixPermissions: 0o755],
+                                                  ofItemAtPath: scriptPath)
+        }
+    }
+
+    private static func performInstallation() throws {
+        try installScript()
+        let settingsPath = NSString(string: "~/.claude/settings.json").expandingTildeInPath
         try updateSettingsJson(at: settingsPath)
     }
 
