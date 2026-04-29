@@ -259,14 +259,15 @@ class SessionManager: ObservableObject {
             let tool = message.data.toolName ?? "Unknown"
             let timeSinceLastUpdate = Date().timeIntervalSince(session.lastUpdate)
 
-            // 检查会话是否在静默期（Stop 后 10 秒内）
+            // 检查会话是否在静默期（Stop 后 SessionState.postStopSilentPeriod 秒内）
             // 在此期间忽略所有 PreToolUse，保持 completed 状态显示
             if let stopTime = sessionStopTimes[sessionKey] {
                 let timeSinceStop = Date().timeIntervalSince(stopTime)
 
-                if timeSinceStop < 10 {
+                if timeSinceStop < SessionState.postStopSilentPeriod {
                     // 静默期内，忽略所有 PreToolUse（都可能是预测操作）
-                    print("Ignoring PreToolUse (\(tool)) during \(String(format: "%.1f", 10 - timeSinceStop))s silent period: \(sessionKey)")
+                    let remaining = SessionState.postStopSilentPeriod - timeSinceStop
+                    print("Ignoring PreToolUse (\(tool)) during \(String(format: "%.1f", remaining))s silent period: \(sessionKey)")
                     return
                 } else {
                     // 静默期结束，清除标记
@@ -609,36 +610,47 @@ class SessionManager: ObservableObject {
         let now = Date()
         var sessionsToRemove: [String] = []
 
+        // Snapshot and apply: collect mutations during the scan and
+        // apply them after the loop. Mutating the dictionary inside
+        // the for-in (as we did before) is implementation-defined in
+        // Swift even though it tends to work for value updates.
+        var promotedToCompleted: [(String, SessionState)] = []
+
         for (key, session) in sessions {
             let elapsed = now.timeIntervalSince(session.lastUpdate)
 
-            // 对于已完成/错误状态，5秒后移除（直接消失）
+            // 对于已完成/错误状态，completedTimeout 秒后移除
             if session.status == .completed || session.status == .error {
-                if elapsed > 5 {
+                if elapsed > SessionState.completedTimeout {
                     sessionsToRemove.append(key)
                 }
             }
-            // 对于工作状态（reading/writing/thinking），超过60秒无更新则标记为completed
+            // 对于工作状态（reading/writing/thinking），超过 activeTimeout
+            // 秒无更新则视为已完成。
             else if session.status == .reading || session.status == .writing || session.status == .thinking {
-                if elapsed > 60 {
+                if elapsed > SessionState.activeTimeout {
                     var updatedSession = session
                     updatedSession.status = .completed
                     updatedSession.currentAction = "Task completed"
                     updatedSession.metadata = ""
-                    updatedSession.lastUpdate = now  // 重置时间，让它显示30秒后消失
-                    sessions[key] = updatedSession
+                    updatedSession.lastUpdate = now  // 重置时间，让它再过 completedTimeout 秒后消失
+                    promotedToCompleted.append((key, updatedSession))
                     print("Auto-completed stale session: \(key)")
 
                     // 播放完成提示音
                     playNotificationSound(.completion)
                 }
             }
-            // 对于waiting状态，90秒后移除
+            // 对于 waiting 状态，waitingTimeout 秒后移除
             else if session.status == .waiting {
-                if elapsed > 90 {
+                if elapsed > SessionState.waitingTimeout {
                     sessionsToRemove.append(key)
                 }
             }
+        }
+
+        for (key, updated) in promotedToCompleted {
+            sessions[key] = updated
         }
 
         for key in sessionsToRemove {

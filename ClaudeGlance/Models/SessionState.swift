@@ -49,10 +49,21 @@ struct SessionState: Identifiable, Codable {
     var displayAfter: Date = Date()
 
     // MARK: - Timeout Constants
-    private static let completedTimeout: TimeInterval = 5       // completed/error 状态 5 秒后移除
-    private static let waitingTimeout: TimeInterval = 90        // waiting 状态 90 秒后自动视为结束
-    private static let activeTimeout: TimeInterval = 60         // thinking/reading/writing 60秒无更新后消失
-    private static let longOperationThreshold: TimeInterval = 30 // 超过 30 秒视为长时间操作
+    //
+    // Single source of truth for every session lifetime threshold.
+    // SessionManager.cleanupStaleSessions used to duplicate these as
+    // bare literals (5 / 60 / 90), which drifted out of sync. Made
+    // `static` (not `private static`) so the manager can reference
+    // them by name.
+    static let completedTimeout: TimeInterval = 5         // completed/error 状态 5 秒后移除
+    static let waitingTimeout: TimeInterval = 90          // waiting 状态 90 秒后自动视为结束
+    static let activeTimeout: TimeInterval = 60           // thinking/reading/writing 60s 无更新 → 视为完成
+    static let longOperationThreshold: TimeInterval = 30  // 超过 30 秒视为长时间操作（"Still thinking..."）
+    /// Window after a `Stop` event during which incoming `PreToolUse`
+    /// events are treated as speculative and ignored. Prevents the
+    /// completed banner from being yanked back into a working state
+    /// by Claude's pre-warming or noisy hook ordering.
+    static let postStopSilentPeriod: TimeInterval = 10
 
     // 是否已经过了延迟显示时间
     var isReadyToDisplay: Bool {
@@ -72,13 +83,13 @@ struct SessionState: Identifiable, Codable {
 
         switch status {
         case .completed, .error:
-            // 已完成或出错的会话，30秒后消失
+            // 已完成或出错的会话在 completedTimeout 秒后消失
             return elapsed < Self.completedTimeout
         case .waiting:
-            // waiting 状态 90 秒后消失（假设对话已结束）
+            // waiting 状态 waitingTimeout 秒后消失（假设对话已结束）
             return elapsed < Self.waitingTimeout
         case .thinking, .reading, .writing:
-            // 工作状态保持更长时间（Claude 可能在长时间思考）
+            // 工作状态保持 activeTimeout 秒（Claude 可能在长时间思考）
             return elapsed < Self.activeTimeout
         case .idle:
             return elapsed < Self.completedTimeout
