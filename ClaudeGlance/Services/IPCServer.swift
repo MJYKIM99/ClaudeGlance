@@ -8,6 +8,7 @@
 import Foundation
 import Network
 import Combine
+import os
 
 class IPCServer: ObservableObject {
     private var httpListener: NWListener?
@@ -66,7 +67,7 @@ class IPCServer: ObservableObject {
         isRunning = true
         connectionStatus = .connected
         statusMessage = "Server running on port \(currentPort)"
-        print("IPC Server started on port \(currentPort)")
+        AppLog.ipc.info("IPC Server started on port \(self.currentPort, privacy: .public)")
 
         // 启动健康检查定时器
         startHealthCheck()
@@ -107,7 +108,7 @@ class IPCServer: ObservableObject {
         let fdValid = serverFd >= 0
 
         if !socketExists || !fdValid {
-            print("Socket health check failed, attempting reconnect...")
+            AppLog.ipc.notice("Socket health check failed, attempting reconnect...")
             reconnect()
         }
     }
@@ -131,10 +132,10 @@ class IPCServer: ObservableObject {
 
             if self?.serverFd ?? -1 >= 0 {
                 self?.connectionStatus = .connected
-                print("Reconnected successfully")
+                AppLog.ipc.info("Reconnected successfully")
             } else {
                 self?.connectionStatus = .error("Failed to reconnect")
-                print("Reconnect failed")
+                AppLog.ipc.error("Reconnect failed")
             }
         }
     }
@@ -143,7 +144,7 @@ class IPCServer: ObservableObject {
     private func startUnixSocketServer() {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else {
-            print("Failed to create Unix socket")
+            AppLog.ipc.error("Failed to create Unix socket")
             connectionStatus = .error("Failed to create socket")
             return
         }
@@ -169,7 +170,7 @@ class IPCServer: ObservableObject {
         }
 
         guard bindResult == 0 else {
-            print("Failed to bind Unix socket: \(errno)")
+            AppLog.ipc.error("Failed to bind Unix socket: \(errno)")
             connectionStatus = .error("Bind failed: \(errno)")
             close(fd)
             return
@@ -177,14 +178,14 @@ class IPCServer: ObservableObject {
 
         // 监听
         guard listen(fd, 5) == 0 else {
-            print("Failed to listen on Unix socket: \(errno)")
+            AppLog.ipc.error("Failed to listen on Unix socket: \(errno)")
             connectionStatus = .error("Listen failed: \(errno)")
             close(fd)
             return
         }
 
         serverFd = fd
-        print("Unix socket listening at \(socketPath)")
+        AppLog.ipc.info("Unix socket listening at \(self.socketPath, privacy: .public)")
 
         // 使用 GCD 处理连接
         let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .global(qos: .userInitiated))
@@ -238,13 +239,13 @@ class IPCServer: ObservableObject {
                 try startHTTPListener(on: port)
                 currentPort = port
                 if port != primaryPort {
-                    print("Using fallback port \(port) (primary port \(primaryPort) was unavailable)")
+                    AppLog.ipc.info("Using fallback port \(port, privacy: .public) (primary port \(self.primaryPort, privacy: .public) was unavailable)")
                     statusMessage = "Using port \(port) (fallback)"
                 }
                 return
             } catch {
                 lastError = error
-                print("Port \(port) unavailable: \(error.localizedDescription)")
+                AppLog.ipc.info("Port \(port) unavailable: \(error.localizedDescription)")
                 continue
             }
         }
@@ -269,14 +270,14 @@ class IPCServer: ObservableObject {
         listener.stateUpdateHandler = { state in
             switch state {
             case .ready:
-                print("HTTP server listening on port \(port)")
+                AppLog.ipc.info("HTTP server listening on port \(port)")
                 semaphore.signal()
             case .failed(let error):
-                print("HTTP listener failed on port \(port): \(error)")
+                AppLog.ipc.error("HTTP listener failed on port \(port): \(error)")
                 startError = error
                 semaphore.signal()
             case .waiting(let error):
-                print("HTTP listener waiting on port \(port): \(error)")
+                AppLog.ipc.info("HTTP listener waiting on port \(port): \(error)")
                 startError = error
                 semaphore.signal()
             default:

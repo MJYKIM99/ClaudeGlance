@@ -10,6 +10,7 @@
 import AppKit
 import Combine
 import SwiftUI
+import os
 
 final class BrowOverlayWindow: NSWindowController {
     private let sessionManager: SessionManager
@@ -146,11 +147,8 @@ final class BrowOverlayWindow: NSWindowController {
     private func handleSessionUpdate(_ sessions: [SessionState]) {
         let currCount = sessions.count
         let autoPeek = UserDefaults.standard.bool(forKey: Defaults.browAutoPeekEnabled)
-        NSLog("[ClaudeGlance][Brow] sessionUpdate count=%d firstEmitted=%@ autoPeek=%@ statuses=[%@]",
-              currCount,
-              observedFirstEmission ? "Y" : "N",
-              autoPeek ? "Y" : "N",
-              sessions.map { "\($0.id):\($0.status.rawValue)" }.joined(separator: ", "))
+        let statusList = sessions.map { "\($0.id):\($0.status.rawValue)" }.joined(separator: ", ")
+        AppLog.brow.debug("sessionUpdate count=\(currCount, privacy: .public) firstEmitted=\(self.observedFirstEmission ? "Y" : "N", privacy: .public) autoPeek=\(autoPeek ? "Y" : "N", privacy: .public) statuses=[\(statusList, privacy: .public)]")
 
         // Drive the dormant surface visibility. While live content is
         // false the brow renders nothing on hardware-ledge displays so
@@ -182,10 +180,7 @@ final class BrowOverlayWindow: NSWindowController {
                     prev != s.status &&
                     Self.peekWorthyStatuses.contains(s.status)
                 if isNew || transitionedIntoPeekState {
-                    NSLog("[ClaudeGlance][Brow] auto-peek session=%@ prev=%@ → %@",
-                          s.id,
-                          prev?.rawValue ?? "<new>",
-                          s.status.rawValue)
+                    AppLog.brow.info("auto-peek session=\(s.id, privacy: .public) prev=\(prev?.rawValue ?? "<new>", privacy: .public) → \(s.status.rawValue, privacy: .public)")
                     brow.peekTransiently()
                     break
                 }

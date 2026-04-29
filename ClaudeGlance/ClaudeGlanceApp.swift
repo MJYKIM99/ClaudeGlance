@@ -9,6 +9,7 @@ import SwiftUI
 import Combine
 import ServiceManagement
 import UserNotifications
+import os
 
 @main
 struct ClaudeGlanceApp: App {
@@ -412,8 +413,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     // MARK: - Brow HUD (experimental)
     private func setupBrowOverlayIfEnabled() {
         let enabled = UserDefaults.standard.bool(forKey: Defaults.browHUDEnabled)
-        NSLog("[ClaudeGlance][Brow] setupBrowOverlayIfEnabled: enabled=%@",
-              enabled ? "YES" : "NO")
+        AppLog.brow.info("setupBrowOverlayIfEnabled: enabled=\(enabled ? "YES" : "NO", privacy: .public)")
         guard enabled else { return }
         rebuildBrowOverlay()
         suppressFloatingHUD()
@@ -442,17 +442,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         let screen = NSScreen.screens.first(where: { $0.frame.contains(mouse) })
             ?? NSScreen.internalOrMain
         guard let screen = screen else {
-            NSLog("[ClaudeGlance][Brow] ❌ No screen available")
+            AppLog.brow.error("❌ No screen available")
             return
         }
-        NSLog("[ClaudeGlance][Brow] Building overlay on screen frame=%@ hasLedge=%@",
-              NSStringFromRect(screen.frame),
-              screen.hasHardwareLedge ? "YES" : "NO")
+        AppLog.brow.info("Building overlay on screen frame=\(NSStringFromRect(screen.frame), privacy: .public) hasLedge=\(screen.hasHardwareLedge ? "YES" : "NO", privacy: .public)")
         let overlay = BrowOverlayWindow(sessionManager: sessionManager, screen: screen)
         overlay.show()
         browOverlayWindow = overlay
-        NSLog("[ClaudeGlance][Brow] ✅ Overlay shown. window=%@",
-              String(describing: overlay.window))
+        AppLog.brow.info("✅ Overlay shown. window=\(String(describing: overlay.window), privacy: .public)")
     }
 
     private func observeDisplayChanges() {
@@ -473,7 +470,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     @objc func toggleBrowAutoPeek() {
         let enabled = !UserDefaults.standard.bool(forKey: Defaults.browAutoPeekEnabled)
         UserDefaults.standard.set(enabled, forKey: Defaults.browAutoPeekEnabled)
-        NSLog("[ClaudeGlance][Brow] toggleBrowAutoPeek -> %@", enabled ? "ON" : "OFF")
+        AppLog.brow.info("toggleBrowAutoPeek -> \(enabled ? "ON" : "OFF", privacy: .public)")
         if let item = statusItem?.menu?.item(withTag: 401) {
             item.state = enabled ? .on : .off
         }
@@ -482,7 +479,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     @objc func toggleBrowOverlay() {
         let enabled = !UserDefaults.standard.bool(forKey: Defaults.browHUDEnabled)
         UserDefaults.standard.set(enabled, forKey: Defaults.browHUDEnabled)
-        NSLog("[ClaudeGlance][Brow] toggleBrowOverlay -> %@", enabled ? "ON" : "OFF")
+        AppLog.brow.info("toggleBrowOverlay -> \(enabled ? "ON" : "OFF", privacy: .public)")
         if enabled {
             rebuildBrowOverlay()
             suppressFloatingHUD()
@@ -505,58 +502,56 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         do {
             try ipcServer.start()
         } catch {
-            print("Failed to start IPC server: \(error)")
+            AppLog.ipc.error("Failed to start IPC server: \(error.localizedDescription, privacy: .public)")
         }
     }
 
     // MARK: - Auto Install Hook
     private func autoInstallHookIfNeeded() {
-        NSLog("[ClaudeGlance] autoInstallHookIfNeeded() starting")
+        AppLog.hooks.info("autoInstallHookIfNeeded() starting")
         guard let bundledURL = HookInstaller.bundledScriptURL() else {
-            NSLog("[ClaudeGlance] ❌ Hook script NOT found in bundle. Bundle resourcePath=%@",
-                  Bundle.main.resourcePath ?? "nil")
+            AppLog.hooks.error("❌ Hook script NOT found in bundle. Bundle resourcePath=\(Bundle.main.resourcePath ?? "nil", privacy: .public)")
             return
         }
-        NSLog("[ClaudeGlance] ✅ Bundled script: %@", bundledURL.path)
+        AppLog.hooks.info("✅ Bundled script: \(bundledURL.path, privacy: .public)")
 
         let targetPath = HookInstaller.installedScriptPath
         let settingsPath = NSString(string: "~/.claude/settings.json").expandingTildeInPath
-        NSLog("[ClaudeGlance] Target hook path: %@", targetPath)
-        NSLog("[ClaudeGlance] Target settings path: %@", settingsPath)
+        AppLog.hooks.info("Target hook path: \(targetPath, privacy: .public)")
+        AppLog.hooks.info("Target settings path: \(settingsPath, privacy: .public)")
 
         do {
             // 1. Script: prefer a symlink to the bundled script.
             let needsScriptInstall: Bool
             if HookInstaller.installedSymlinkPointsToBundle() {
                 needsScriptInstall = false
-                NSLog("[ClaudeGlance] Script is already a symlink to current bundle.")
+                AppLog.hooks.info("Script is already a symlink to current bundle.")
             } else if FileManager.default.fileExists(atPath: targetPath),
                       let existing = try? String(contentsOfFile: targetPath, encoding: .utf8),
                       existing == HookInstaller.bundledScriptContent() {
                 needsScriptInstall = false
-                NSLog("[ClaudeGlance] Script is plain file matching bundle.")
+                AppLog.hooks.info("Script is plain file matching bundle.")
             } else {
                 needsScriptInstall = true
-                NSLog("[ClaudeGlance] Script needs (re)install.")
+                AppLog.hooks.info("Script needs (re)install.")
             }
 
             if needsScriptInstall {
                 try HookInstaller.installScript()
-                NSLog("[ClaudeGlance] ✅ installScript() succeeded.")
+                AppLog.hooks.info("✅ installScript() succeeded.")
             }
 
             // 2. settings.json validation — patch every launch if needed.
             let missing = HookInstaller.missingHookTypes(at: settingsPath)
             if !missing.isEmpty {
-                NSLog("[ClaudeGlance] settings.json missing hooks: %@. Repairing...",
-                      missing.joined(separator: ","))
+                AppLog.hooks.notice("settings.json missing hooks: \(missing.joined(separator: ","), privacy: .public). Repairing...")
                 try HookInstaller.updateSettingsJson(at: settingsPath)
-                NSLog("[ClaudeGlance] ✅ settings.json hooks repaired.")
+                AppLog.hooks.info("✅ settings.json hooks repaired.")
             } else {
-                NSLog("[ClaudeGlance] settings.json already has all hooks.")
+                AppLog.hooks.info("settings.json already has all hooks.")
             }
         } catch {
-            NSLog("[ClaudeGlance] ❌ auto-install failed: %@", String(describing: error))
+            AppLog.hooks.error("❌ auto-install failed: \(String(describing: error), privacy: .public)")
         }
     }
 
@@ -590,7 +585,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             do {
                 try self?.ipcServer.start()
             } catch {
-                print("Failed to restart IPC server: \(error)")
+                AppLog.ipc.error("Failed to restart IPC server: \(error.localizedDescription, privacy: .public)")
             }
         }
     }

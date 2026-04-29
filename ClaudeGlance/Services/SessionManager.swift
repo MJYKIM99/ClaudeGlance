@@ -9,6 +9,7 @@ import Foundation
 import Combine
 import AppKit
 import UserNotifications
+import os
 
 // MARK: - UserDefaults Extension
 extension UserDefaults {
@@ -212,11 +213,11 @@ class SessionManager: ObservableObject {
     func processEvent(_ data: Data) {
         // 调试：打印收到的原始数据
         if let jsonString = String(data: data, encoding: .utf8) {
-            print("Received: \(jsonString.prefix(200))...")
+            AppLog.session.debug("Received: \(jsonString.prefix(200))...")
         }
 
         guard let message = try? JSONDecoder().decode(HookMessage.self, from: data) else {
-            print("Failed to decode hook message")
+            AppLog.session.error("Failed to decode hook message")
             return
         }
 
@@ -267,7 +268,7 @@ class SessionManager: ObservableObject {
                 if timeSinceStop < SessionState.postStopSilentPeriod {
                     // 静默期内，忽略所有 PreToolUse（都可能是预测操作）
                     let remaining = SessionState.postStopSilentPeriod - timeSinceStop
-                    print("Ignoring PreToolUse (\(tool)) during \(String(format: "%.1f", remaining))s silent period: \(sessionKey)")
+                    AppLog.session.debug("Ignoring PreToolUse (\(tool)) during \(String(format: "%.1f", remaining))s silent period: \(sessionKey)")
                     return
                 } else {
                     // 静默期结束，清除标记
@@ -278,11 +279,11 @@ class SessionManager: ObservableObject {
                     if previousStatus == .completed {
                         sessions.removeValue(forKey: sessionKey)
                         updateActiveSessions()
-                        print("Silent period ended, removing completed session: \(sessionKey)")
+                        AppLog.session.debug("Silent period ended, removing completed session: \(sessionKey)")
                         return
                     }
 
-                    print("Silent period ended, starting new interaction: \(sessionKey)")
+                    AppLog.session.debug("Silent period ended, starting new interaction: \(sessionKey)")
                     session.toolHistory.removeAll()
                 }
             }
@@ -293,13 +294,13 @@ class SessionManager: ObservableObject {
 
             // 如果是 waiting 状态且时间很短（< 1秒），可能是预测操作，忽略
             if previousStatus == .waiting && timeSinceLastUpdate < 1 {
-                print("Ignoring speculative PreToolUse for waiting session: \(sessionKey)")
+                AppLog.session.debug("Ignoring speculative PreToolUse for waiting session: \(sessionKey)")
                 return
             }
 
             // 如果是新的交互，重置会话状态
             if isNewInteraction {
-                print("New interaction detected for \(sessionKey), resetting session")
+                AppLog.session.debug("New interaction detected for \(sessionKey), resetting session")
                 session.toolHistory.removeAll()
             }
 
@@ -388,7 +389,7 @@ class SessionManager: ObservableObject {
                     sessionStartTimes.removeValue(forKey: sessionKey)
                     saveTodayStats()
                 }
-                print("Session completed: \(sessionKey), recorded stop time")
+                AppLog.session.debug("Session completed: \(sessionKey), recorded stop time")
 
                 // 任务完成时播放提示音
                 if previousStatus != .completed {
@@ -404,7 +405,7 @@ class SessionManager: ObservableObject {
         sessions[sessionKey] = session
         updateActiveSessions()
 
-        print("Updated session: \(sessionKey) -> \(session.status) - \(session.currentAction)")
+        AppLog.session.debug("Updated session: \(sessionKey, privacy: .public) -> \(session.status.rawValue, privacy: .public) - \(session.currentAction, privacy: .public)")
     }
 
     // MARK: - Fade Animation
@@ -458,7 +459,7 @@ class SessionManager: ObservableObject {
         sessionStopTimes.removeValue(forKey: sessionId)
         sessionStartTimes.removeValue(forKey: sessionId)
         updateActiveSessions()
-        print("Dismissed session: \(sessionId)")
+        AppLog.session.debug("Dismissed session: \(sessionId)")
     }
 
     // MARK: - Sound Notifications
@@ -635,7 +636,7 @@ class SessionManager: ObservableObject {
                     updatedSession.metadata = ""
                     updatedSession.lastUpdate = now  // 重置时间，让它再过 completedTimeout 秒后消失
                     promotedToCompleted.append((key, updatedSession))
-                    print("Auto-completed stale session: \(key)")
+                    AppLog.session.debug("Auto-completed stale session: \(key)")
 
                     // 播放完成提示音
                     playNotificationSound(.completion)

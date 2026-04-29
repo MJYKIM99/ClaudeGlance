@@ -12,6 +12,7 @@
 import AppKit
 import Combine
 import Foundation
+import os
 
 enum BrowPhase {
     case dormant   // Idle pill / side chips
@@ -143,16 +144,14 @@ final class BrowController: ObservableObject {
         pendingExpand?.cancel()
         guard phase != .expanded else { return }
         lastExpandReason = reason
-        NSLog("[ClaudeGlance][Brow] expand(reason=%@) hit=%@",
-              String(describing: reason),
-              NSStringFromRect(dormantHitRegion))
+        AppLog.brow.info("expand(reason=\(String(describing: reason), privacy: .public)) hit=\(NSStringFromRect(self.dormantHitRegion), privacy: .public)")
         phase = .expanded
     }
 
     func collapse() {
         pendingExpand?.cancel()
         guard phase != .dormant else { return }
-        NSLog("[ClaudeGlance][Brow] collapse()")
+        AppLog.brow.info("collapse()")
         phase = .dormant
     }
 
@@ -186,7 +185,7 @@ final class BrowController: ObservableObject {
         let deadline = Date().addingTimeInterval(duration)
         peekDeadline = deadline
         expand(reason: .peek)
-        NSLog("[ClaudeGlance][Brow] peek for %.1fs", duration)
+        AppLog.brow.info("peek for \(String(format: "%.1f", duration), privacy: .public)s")
 
         // After the hold expires, let the hover poll decide what to do.
         // If the cursor isn't engaged we collapse here directly so the
