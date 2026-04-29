@@ -145,7 +145,7 @@ final class BrowOverlayWindow: NSWindowController {
 
     private func handleSessionUpdate(_ sessions: [SessionState]) {
         let currCount = sessions.count
-        let autoPeek = UserDefaults.standard.bool(forKey: "browAutoPeekEnabled")
+        let autoPeek = UserDefaults.standard.bool(forKey: Defaults.browAutoPeekEnabled)
         NSLog("[ClaudeGlance][Brow] sessionUpdate count=%d firstEmitted=%@ autoPeek=%@ statuses=[%@]",
               currCount,
               observedFirstEmission ? "Y" : "N",

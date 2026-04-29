@@ -114,10 +114,10 @@ class SessionManager: ObservableObject {
 
     init() {
         // 从 UserDefaults 读取设置
-        soundEnabled = UserDefaults.standard.bool(forKey: "soundEnabled")
+        soundEnabled = UserDefaults.standard.bool(forKey: Defaults.soundEnabled)
         if !UserDefaults.standard.contains(key: "soundEnabled") {
             soundEnabled = true
-            UserDefaults.standard.set(true, forKey: "soundEnabled")
+            UserDefaults.standard.set(true, forKey: Defaults.soundEnabled)
         }
 
         // 读取今日统计
@@ -139,16 +139,16 @@ class SessionManager: ObservableObject {
     // MARK: - Stats Persistence
     private func loadTodayStats() {
         // 读取 weeklyStats
-        if let data = UserDefaults.standard.data(forKey: "weeklyStats"),
+        if let data = UserDefaults.standard.data(forKey: Defaults.weeklyStats),
            let decoded = try? JSONDecoder().decode([DayStats].self, from: data) {
             weeklyStats = decoded
         }
 
         // 从旧格式迁移（如果 weeklyStats 为空但旧 key 有数据）
         if weeklyStats.isEmpty {
-            let oldToolCalls = UserDefaults.standard.integer(forKey: "todayToolCalls")
-            let oldSessions = UserDefaults.standard.integer(forKey: "todaySessionsCount")
-            let oldTimestamp = UserDefaults.standard.double(forKey: "todayStatsLastReset")
+            let oldToolCalls = UserDefaults.standard.integer(forKey: Defaults.legacyTodayToolCalls)
+            let oldSessions = UserDefaults.standard.integer(forKey: Defaults.legacyTodaySessionsCount)
+            let oldTimestamp = UserDefaults.standard.double(forKey: Defaults.legacyTodayStatsLastReset)
             if oldToolCalls > 0 || oldSessions > 0 {
                 let oldDate = oldTimestamp > 0 ? Date(timeIntervalSince1970: oldTimestamp) : Date()
                 let formatter = DateFormatter()
@@ -178,13 +178,13 @@ class SessionManager: ObservableObject {
 
         // 持久化 weeklyStats
         if let data = try? JSONEncoder().encode(weeklyStats) {
-            UserDefaults.standard.set(data, forKey: "weeklyStats")
+            UserDefaults.standard.set(data, forKey: Defaults.weeklyStats)
         }
 
         // 向后兼容旧 key
-        UserDefaults.standard.set(todayStats.toolCalls, forKey: "todayToolCalls")
-        UserDefaults.standard.set(todayStats.sessionsCount, forKey: "todaySessionsCount")
-        UserDefaults.standard.set(todayStats.lastReset.timeIntervalSince1970, forKey: "todayStatsLastReset")
+        UserDefaults.standard.set(todayStats.toolCalls, forKey: Defaults.legacyTodayToolCalls)
+        UserDefaults.standard.set(todayStats.sessionsCount, forKey: Defaults.legacyTodaySessionsCount)
+        UserDefaults.standard.set(todayStats.lastReset.timeIntervalSince1970, forKey: Defaults.legacyTodayStatsLastReset)
     }
 
     private func syncTodayFromWeekly() {
@@ -475,7 +475,7 @@ class SessionManager: ObservableObject {
         lastNotificationTime[type] = now
 
         // Sound notification
-        if UserDefaults.standard.bool(forKey: "soundEnabled") {
+        if UserDefaults.standard.bool(forKey: Defaults.soundEnabled) {
             let soundName: NSSound.Name
             switch type {
             case .attention:
@@ -492,7 +492,7 @@ class SessionManager: ObservableObject {
         }
 
         // macOS Notification Center
-        if UserDefaults.standard.bool(forKey: "notificationsEnabled") {
+        if UserDefaults.standard.bool(forKey: Defaults.notificationsEnabled) {
             let content = UNMutableNotificationContent()
             switch type {
             case .attention:
@@ -514,7 +514,7 @@ class SessionManager: ObservableObject {
 
     func toggleSound() {
         soundEnabled.toggle()
-        UserDefaults.standard.set(soundEnabled, forKey: "soundEnabled")
+        UserDefaults.standard.set(soundEnabled, forKey: Defaults.soundEnabled)
     }
 
     // MARK: - Tool Mapping

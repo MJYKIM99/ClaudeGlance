@@ -35,7 +35,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.register(defaults: [
-            "browAutoPeekEnabled": true
+            Defaults.browAutoPeekEnabled: true
         ])
 
         setupMenuBar()
@@ -97,12 +97,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
         let browItem = NSMenuItem(title: "Notch HUD (Experimental)", action: #selector(toggleBrowOverlay), keyEquivalent: "n")
         browItem.tag = 400
-        browItem.state = UserDefaults.standard.bool(forKey: "browHUDEnabled") ? .on : .off
+        browItem.state = UserDefaults.standard.bool(forKey: Defaults.browHUDEnabled) ? .on : .off
         menu.addItem(browItem)
 
         let autoPeekItem = NSMenuItem(title: "  Auto Expand on Activity", action: #selector(toggleBrowAutoPeek), keyEquivalent: "")
         autoPeekItem.tag = 401
-        autoPeekItem.state = UserDefaults.standard.bool(forKey: "browAutoPeekEnabled") ? .on : .off
+        autoPeekItem.state = UserDefaults.standard.bool(forKey: Defaults.browAutoPeekEnabled) ? .on : .off
         menu.addItem(autoPeekItem)
 
         menu.addItem(NSMenuItem.separator())
@@ -411,7 +411,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     // MARK: - Brow HUD (experimental)
     private func setupBrowOverlayIfEnabled() {
-        let enabled = UserDefaults.standard.bool(forKey: "browHUDEnabled")
+        let enabled = UserDefaults.standard.bool(forKey: Defaults.browHUDEnabled)
         NSLog("[ClaudeGlance][Brow] setupBrowOverlayIfEnabled: enabled=%@",
               enabled ? "YES" : "NO")
         guard enabled else { return }
@@ -462,7 +462,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             queue: .main
         ) { [weak self] _ in
             guard let self = self,
-                  UserDefaults.standard.bool(forKey: "browHUDEnabled") else { return }
+                  UserDefaults.standard.bool(forKey: Defaults.browHUDEnabled) else { return }
             // Debounce so display sleep/wake transitions settle first.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 self?.rebuildBrowOverlay()
@@ -471,8 +471,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     }
 
     @objc func toggleBrowAutoPeek() {
-        let enabled = !UserDefaults.standard.bool(forKey: "browAutoPeekEnabled")
-        UserDefaults.standard.set(enabled, forKey: "browAutoPeekEnabled")
+        let enabled = !UserDefaults.standard.bool(forKey: Defaults.browAutoPeekEnabled)
+        UserDefaults.standard.set(enabled, forKey: Defaults.browAutoPeekEnabled)
         NSLog("[ClaudeGlance][Brow] toggleBrowAutoPeek -> %@", enabled ? "ON" : "OFF")
         if let item = statusItem?.menu?.item(withTag: 401) {
             item.state = enabled ? .on : .off
@@ -480,8 +480,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     }
 
     @objc func toggleBrowOverlay() {
-        let enabled = !UserDefaults.standard.bool(forKey: "browHUDEnabled")
-        UserDefaults.standard.set(enabled, forKey: "browHUDEnabled")
+        let enabled = !UserDefaults.standard.bool(forKey: Defaults.browHUDEnabled)
+        UserDefaults.standard.set(enabled, forKey: Defaults.browHUDEnabled)
         NSLog("[ClaudeGlance][Brow] toggleBrowOverlay -> %@", enabled ? "ON" : "OFF")
         if enabled {
             rebuildBrowOverlay()
@@ -666,8 +666,8 @@ struct SettingsView: View {
 
 // MARK: - General Settings Tab
 struct GeneralSettingsTab: View {
-    @AppStorage("soundEnabled") private var soundEnabled: Bool = true
-    @AppStorage("notificationsEnabled") private var notificationsEnabled: Bool = true
+    @AppStorage(Defaults.soundEnabled) private var soundEnabled: Bool = true
+    @AppStorage(Defaults.notificationsEnabled) private var notificationsEnabled: Bool = true
     @State private var launchAtLogin: Bool = SMAppService.mainApp.status == .enabled
     @State private var loginItemError: String?
 
@@ -728,10 +728,10 @@ struct GeneralSettingsTab: View {
 
 // MARK: - Appearance Settings Tab
 struct AppearanceSettingsTab: View {
-    @AppStorage("autoHideIdle") private var autoHideIdle: Bool = true
-    @AppStorage("idleTimeout") private var idleTimeout: Double = 60
-    @AppStorage("hudOpacity") private var hudOpacity: Double = 1.0
-    @AppStorage("showToolHistory") private var showToolHistory: Bool = true
+    @AppStorage(Defaults.autoHideIdle) private var autoHideIdle: Bool = true
+    @AppStorage(Defaults.idleTimeout) private var idleTimeout: Double = 60
+    @AppStorage(Defaults.hudOpacity) private var hudOpacity: Double = 1.0
+    @AppStorage(Defaults.showToolHistory) private var showToolHistory: Bool = true
 
     var body: some View {
         Form {

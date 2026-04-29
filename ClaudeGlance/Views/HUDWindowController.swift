@@ -86,9 +86,9 @@ class HUDWindowController: NSWindowController {
         guard let window = window else { return }
 
         // 从 UserDefaults 读取保存的位置和显示器信息
-        let savedX = UserDefaults.standard.double(forKey: "hudPositionX")
-        let savedY = UserDefaults.standard.double(forKey: "hudPositionY")
-        let savedScreenHash = UserDefaults.standard.integer(forKey: "hudScreenHash")
+        let savedX = UserDefaults.standard.double(forKey: Defaults.hudPositionX)
+        let savedY = UserDefaults.standard.double(forKey: Defaults.hudPositionY)
+        let savedScreenHash = UserDefaults.standard.integer(forKey: Defaults.hudScreenHash)
 
         if savedX != 0 || savedY != 0 {
             // 尝试找到保存时的显示器
@@ -154,8 +154,8 @@ class HUDWindowController: NSWindowController {
     }
 
     private func handleAutoHide(sessions: [SessionState]) {
-        let autoHideIdle = UserDefaults.standard.bool(forKey: "autoHideIdle")
-        let idleTimeout = UserDefaults.standard.double(forKey: "idleTimeout")
+        let autoHideIdle = UserDefaults.standard.bool(forKey: Defaults.autoHideIdle)
+        let idleTimeout = UserDefaults.standard.double(forKey: Defaults.idleTimeout)
         let timeout = idleTimeout > 0 ? idleTimeout : 60
 
         if sessions.isEmpty {
@@ -222,13 +222,13 @@ class HUDWindowController: NSWindowController {
     func savePosition() {
         guard let window = window else { return }
 
-        UserDefaults.standard.set(window.frame.origin.x, forKey: "hudPositionX")
-        UserDefaults.standard.set(window.frame.origin.y, forKey: "hudPositionY")
+        UserDefaults.standard.set(window.frame.origin.x, forKey: Defaults.hudPositionX)
+        UserDefaults.standard.set(window.frame.origin.y, forKey: Defaults.hudPositionY)
 
         // 保存窗口所在的显示器
         if let screen = window.screen ?? NSScreen.main {
             let hash = screenHash(for: screen)
-            UserDefaults.standard.set(hash, forKey: "hudScreenHash")
+            UserDefaults.standard.set(hash, forKey: Defaults.hudScreenHash)
         }
     }
 
@@ -276,7 +276,7 @@ class WindowVisibility: ObservableObject {
 struct HUDContentView: View {
     @ObservedObject var sessionManager: SessionManager
     @ObservedObject var windowVisibility: WindowVisibility
-    @AppStorage("hudOpacity") private var hudOpacity: Double = 1.0
+    @AppStorage(Defaults.hudOpacity) private var hudOpacity: Double = 1.0
 
     var body: some View {
         ZStack {
