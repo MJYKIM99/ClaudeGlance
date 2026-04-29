@@ -49,6 +49,7 @@ A native macOS application that provides a real-time floating HUD (Heads-Up Disp
 - **Tool Breakdown & Duration** - Per-tool call counts (Top 3) and cumulative active time in menu bar
 - **macOS Notification Center** - System notification banners when Claude needs input or completes a task
 - **Session Context Menu** - Right-click cards to copy session ID, project path, open in Finder, or view transcript
+- **Notch HUD Overlay** *(experimental)* - Optional brow silhouette that hugs the MacBook camera ledge for an at-a-glance status indicator
 - **Code Rain Effect** - Matrix-style particle animation on idle HUD
 - **Clickable Project Path** - Click project name in session card to open in Finder
 - **HUD Opacity Control** - Adjustable HUD transparency
@@ -307,6 +308,7 @@ Created by **Kim**
 - **工具分布与时长** - 菜单栏显示 Top 3 工具调用分布和累计活跃时长
 - **macOS 通知中心** - Claude 需要输入或完成任务时推送系统通知
 - **会话右键菜单** - 右键卡片可复制会话 ID、项目路径、打开 Finder 或查看对话记录
+- **刘海 HUD 叠层** *(实验性)* - 可选的 brow 轮廓贴合 MacBook 摄像头凹槽，实现一眼可见的状态指示
 - **代码雨特效** - 空闲时 HUD 显示 Matrix 风格粒子动画
 - **可点击项目路径** - 点击会话卡片项目名在 Finder 中打开
 - **HUD 透明度控制** - 可调节 HUD 透明度
