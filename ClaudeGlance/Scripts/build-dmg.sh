@@ -60,7 +60,7 @@ for arg in "$@"; do
 done
 
 echo -e "${BLUE}╔════════════════════════════════════════╗${NC}"
-echo -e "${BLUE}║   Claude Glance DMG Builder v1.3       ║${NC}"
+echo -e "${BLUE}║     Claude Glance DMG Builder          ║${NC}"
 echo -e "${BLUE}╚════════════════════════════════════════╝${NC}"
 echo ""
 
@@ -75,6 +75,7 @@ if [ "$SKIP_BUILD" = false ]; then
     echo -e "${YELLOW}[2/7]${NC} Building Release version with code signing..."
     xcodebuild -scheme "$SCHEME" \
         -configuration Release \
+        -destination "generic/platform=macOS" \
         -derivedDataPath "$BUILD_DIR" \
         -quiet \
         ONLY_ACTIVE_ARCH=NO \
