@@ -19,6 +19,18 @@ enum BrowPhase {
     case expanded  // Full session-list panel
 }
 
+/// Why the brow last entered the `.expanded` phase. The overlay window
+/// uses this to decide whether stealing the system key window is
+/// appropriate — we must NEVER steal key focus on `.peek` because the
+/// user is typing somewhere else and a hook event must not interrupt
+/// their input.
+enum BrowExpandReason {
+    case hover    // user dwelled the cursor on the brow
+    case click    // user clicked the brow
+    case peek     // event-driven auto-expand (passive)
+    case manual   // programmatic, treated like a click
+}
+
 final class BrowController: ObservableObject {
     @Published var phase: BrowPhase = .dormant
     @Published var isPulsing: Bool = false
@@ -27,6 +39,14 @@ final class BrowController: ObservableObject {
     @Published private(set) var expandedSize: CGSize
     @Published private(set) var displayBounds: CGRect
     @Published private(set) var hasHardwareLedge: Bool = false
+    /// True when there is at least one active session. The dormant
+    /// surface stays completely empty while this is false on
+    /// hardware-ledge displays so the system menu bar is unobstructed.
+    @Published var hasLiveContent: Bool = false
+    /// Reason for the most recent transition into `.expanded`.
+    /// Defaults to `.peek` so any unintentional expansion remains
+    /// passive (cannot steal focus).
+    @Published private(set) var lastExpandReason: BrowExpandReason = .peek
 
     private var pendingExpand: DispatchWorkItem?
     private var clickMonitorGlobal: Any?
@@ -65,9 +85,14 @@ final class BrowController: ObservableObject {
     /// Width of each side chip flanking a hardware ledge.
     static let chipFlankWidth: CGFloat = 130
 
-    /// Hit-test region for the dormant state. Inflated to include the
-    /// adjacent chips on hardware-ledge displays plus a downward buffer
-    /// so the hover target is forgiving.
+    /// Hit-test region for the dormant state.
+    ///
+    /// On hardware-ledge displays the surface only grows asymmetrically
+    /// to the *right* of the cutout (and only while live content is
+    /// showing), so the hit region mirrors that footprint instead of
+    /// extending into the menu-bar slots on either side. On displays
+    /// without a hardware ledge a small lateral buffer keeps the
+    /// virtual pill forgiving to hover.
     var dormantHitRegion: CGRect {
         let core = CGRect(
             x: displayBounds.midX - dormantSize.width / 2,
@@ -75,13 +100,24 @@ final class BrowController: ObservableObject {
             width: dormantSize.width,
             height: dormantSize.height
         )
-        let flankPad: CGFloat = hasHardwareLedge ? Self.chipFlankWidth : 12
-        return CGRect(
-            x: core.minX - flankPad,
-            y: core.minY - 14,
-            width: core.width + flankPad * 2,
-            height: core.height + 14
-        )
+        let downPad: CGFloat = 14
+        if hasHardwareLedge {
+            let rightPad: CGFloat = hasLiveContent ? (Self.chipFlankWidth + 4) : 0
+            return CGRect(
+                x: core.minX,
+                y: core.minY - downPad,
+                width: core.width + rightPad,
+                height: core.height + downPad
+            )
+        } else {
+            let lateralPad: CGFloat = 12
+            return CGRect(
+                x: core.minX - lateralPad,
+                y: core.minY - downPad,
+                width: core.width + lateralPad * 2,
+                height: core.height + downPad
+            )
+        }
     }
 
     /// Hit-test region for the expanded panel.
@@ -103,11 +139,13 @@ final class BrowController: ObservableObject {
 
     // MARK: - Phase transitions
 
-    func expand(via reason: String = "manual") {
+    func expand(reason: BrowExpandReason = .manual) {
         pendingExpand?.cancel()
         guard phase != .expanded else { return }
-        NSLog("[ClaudeGlance][Brow] expand(via=%@) hit=%@",
-              reason, NSStringFromRect(dormantHitRegion))
+        lastExpandReason = reason
+        NSLog("[ClaudeGlance][Brow] expand(reason=%@) hit=%@",
+              String(describing: reason),
+              NSStringFromRect(dormantHitRegion))
         phase = .expanded
     }
 
@@ -147,7 +185,7 @@ final class BrowController: ObservableObject {
         guard phase == .dormant else { return }
         let deadline = Date().addingTimeInterval(duration)
         peekDeadline = deadline
-        expand(via: "peek")
+        expand(reason: .peek)
         NSLog("[ClaudeGlance][Brow] peek for %.1fs", duration)
 
         // After the hold expires, let the hover poll decide what to do.
@@ -209,7 +247,7 @@ final class BrowController: ObservableObject {
             if phase == .dormant,
                let armed = hoverArmedAt,
                now.timeIntervalSince(armed) >= expandDwell {
-                expand(via: "hover")
+                expand(reason: .hover)
             }
         } else {
             hoverArmedAt = nil
@@ -236,7 +274,7 @@ final class BrowController: ObservableObject {
         case .expanded:
             if !contains(at, in: .expanded) { collapse() }
         case .dormant, .peek:
-            if contains(at, in: .dormant) { expand(via: "click") }
+            if contains(at, in: .dormant) { expand(reason: .click) }
         }
     }
 }

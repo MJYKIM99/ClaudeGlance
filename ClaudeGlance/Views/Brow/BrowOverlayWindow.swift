@@ -111,12 +111,22 @@ final class BrowOverlayWindow: NSWindowController {
         brow.$phase
             .receive(on: DispatchQueue.main)
             .sink { [weak self] phase in
-                guard let win = self?.window else { return }
+                guard let self = self, let win = self.window else { return }
                 switch phase {
                 case .expanded:
                     win.ignoresMouseEvents = false
-                    NSApp.activate(ignoringOtherApps: false)
-                    win.makeKey()
+                    // CRITICAL: never call NSApp.activate(...) here. The
+                    // overlay panel uses `.nonactivatingPanel` precisely
+                    // so an event-driven peek does not yank the system
+                    // key window away from whatever app the user is
+                    // typing into. We also gate makeKey() on the
+                    // expansion reason: only when the user themselves
+                    // engaged the brow (hover/click/manual) do we take
+                    // the key window. A passive `.peek` (triggered by a
+                    // hook event) renders silently.
+                    if self.brow.lastExpandReason != .peek {
+                        win.makeKey()
+                    }
                 case .dormant, .peek:
                     win.ignoresMouseEvents = true
                 }
@@ -141,6 +151,11 @@ final class BrowOverlayWindow: NSWindowController {
               observedFirstEmission ? "Y" : "N",
               autoPeek ? "Y" : "N",
               sessions.map { "\($0.id):\($0.status.rawValue)" }.joined(separator: ", "))
+
+        // Drive the dormant surface visibility. While live content is
+        // false the brow renders nothing on hardware-ledge displays so
+        // the system menu bar stays unobstructed.
+        brow.hasLiveContent = currCount > 0
 
         // Pulse + recompute panel size whenever the count changes.
         if currCount != lastSessionCount {

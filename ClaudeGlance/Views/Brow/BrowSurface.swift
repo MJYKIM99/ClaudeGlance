@@ -5,11 +5,12 @@
 //  SwiftUI surface rendered inside the ledge overlay panel.
 //
 //  Dormant layout:
-//   • Hardware-ledge displays — two minimal chips flanking the bezel.
-//       - Left chip : PixelSpinner only (no brand text, no project name).
-//       - Right chip : a short status word or a live timer; +N badge if
-//                      multiple sessions are active.
-//   • Other displays — same chip layout sandwiching a virtual pill.
+//   • Hardware-ledge displays — completely empty when no session is
+//     active so the system menu bar is unobstructed. When live content
+//     appears (`brow.hasLiveContent == true`), a single status chip
+//     grows out of the cutout's right edge with a leading-anchored
+//     spring animation (no left-side chip; intentional asymmetry).
+//   • Other displays — a single Dynamic-Island-style virtual pill.
 //  Expanded layout:
 //   • Header strip + reused SessionCard list (project's existing UI).
 //
@@ -41,7 +42,7 @@ struct BrowSurface: View {
                         removal: .opacity
                     ))
             } else if brow.hasHardwareLedge {
-                flankRow
+                ledgeFlank
                     .transition(.opacity)
             } else {
                 virtualPill
@@ -56,38 +57,50 @@ struct BrowSurface: View {
 
     // MARK: - Dormant flank chips (hardware ledge)
 
-    private var flankRow: some View {
-        HStack(spacing: 0) {
-            leftFlank
-                .frame(width: BrowController.chipFlankWidth,
-                       height: brow.dormantSize.height)
-                .padding(.leading, 4)
+    /// Asymmetric dormant surface: empty when there are no live
+    /// sessions, otherwise a single right-side status chip that grows
+    /// out of the ledge's right edge. The left half is intentionally
+    /// always empty so the system menu bar stays unobstructed.
+    ///
+    /// Layout strategy: the row is centred via `.frame(alignment: .center)`,
+    /// so we balance the right-side chip slot with a transparent
+    /// placeholder of equal width on the left. That keeps the ledge
+    /// spacer perfectly centred under the hardware cutout regardless
+    /// of whether the chip is currently rendered.
+    private var ledgeFlank: some View {
+        let chipW = BrowController.chipFlankWidth
+        return HStack(spacing: 0) {
+            // Left balance — never draws anything.
+            Color.clear
+                .frame(width: chipW + 4, height: brow.dormantSize.height)
 
             // Reserve the physical ledge area, expanding briefly on pulse.
             Spacer()
                 .frame(width: brow.dormantSize.width + (brow.isPulsing ? 12 : 0))
 
-            rightFlank
-                .frame(width: BrowController.chipFlankWidth,
-                       height: brow.dormantSize.height)
-                .padding(.trailing, 4)
+            // Right chip — appears only when live content exists, and
+            // grows from its leading edge so the motion reads as
+            // "emerging from the ledge cutout outward to the right".
+            ZStack(alignment: .leading) {
+                if brow.hasLiveContent {
+                    rightFlank
+                        .frame(width: chipW, height: brow.dormantSize.height)
+                        .transition(.asymmetric(
+                            insertion: .scale(scale: 0.02, anchor: .leading)
+                                .combined(with: .opacity),
+                            removal: .scale(scale: 0.05, anchor: .leading)
+                                .combined(with: .opacity)
+                        ))
+                }
+            }
+            .frame(width: chipW, height: brow.dormantSize.height,
+                   alignment: .leading)
+            .padding(.trailing, 4)
         }
         .frame(maxWidth: .infinity, alignment: .center)
-    }
-
-    /// Left chip — just the pixel spinner; intentionally no text.
-    private var leftFlank: some View {
-        chipShell {
-            HStack {
-                Spacer(minLength: 0)
-                PixelSpinner(
-                    status: headSession?.status ?? .idle,
-                    isAnimating: visibility.isVisible
-                )
-                .frame(width: 16, height: 16)
-                Spacer(minLength: 0)
-            }
-        }
+        .animation(.spring(response: 0.45, dampingFraction: 0.85,
+                           blendDuration: 0),
+                   value: brow.hasLiveContent)
     }
 
     /// Right chip — single short status word or live timer.
