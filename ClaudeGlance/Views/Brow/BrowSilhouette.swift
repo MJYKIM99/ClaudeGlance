@@ -26,7 +26,7 @@ struct BrowSilhouette: Shape {
         }
     }
 
-    init(shoulderRadius: CGFloat = 6, skirtRadius: CGFloat = 14) {
+    init(shoulderRadius: CGFloat = 5, skirtRadius: CGFloat = 12) {
         self.shoulderRadius = shoulderRadius
         self.skirtRadius = skirtRadius
     }
@@ -38,49 +38,51 @@ struct BrowSilhouette: Shape {
         let s = min(shoulderRadius, halfWidth)
         let k = min(skirtRadius, max(0, halfWidth - s))
 
+        // Pre-compute landmark abscissas so the two halves can be walked
+        // symmetrically from the base midpoint outward.
+        let baseY = rect.maxY
+        let topY = rect.minY
+        let leftFlank = rect.minX + s
+        let rightFlank = rect.maxX - s
+
         var path = Path()
 
-        // Anchor at the top-left flush with the screen edge.
-        path.move(to: CGPoint(x: rect.minX, y: rect.minY))
+        // Trace from the base centerline outward. Walking the left half
+        // first, crossing the screen-edge top, and returning down the
+        // right half lets the path honour the silhouette's vertical
+        // symmetry instead of being anchored to a corner.
+        path.move(to: CGPoint(x: rect.midX, y: baseY))
 
-        // Top-left shoulder: concave arc tucking inward toward the body.
-        // Expressed as the arc tangent to the segment moving right along
-        // the screen edge and then down into the body.
-        path.addArc(
-            tangent1End: CGPoint(x: rect.minX + s, y: rect.minY),
-            tangent2End: CGPoint(x: rect.minX + s, y: rect.minY + s),
+        // ── Left half ────────────────────────────────────────────────
+        path.addLine(to: CGPoint(x: leftFlank + k, y: baseY))
+        path.addArc(                                       // skirt convex
+            tangent1End: CGPoint(x: leftFlank, y: baseY),
+            tangent2End: CGPoint(x: leftFlank, y: baseY - k),
+            radius: k
+        )
+        path.addLine(to: CGPoint(x: leftFlank, y: topY + s))
+        path.addArc(                                       // shoulder concave
+            tangent1End: CGPoint(x: leftFlank, y: topY),
+            tangent2End: CGPoint(x: rect.minX, y: topY),
             radius: s
         )
 
-        // Left flank descends straight to where the skirt flare begins.
-        path.addLine(to: CGPoint(x: rect.minX + s, y: rect.maxY - k))
+        // ── Top edge of the bounding rect ────────────────────────────
+        path.addLine(to: CGPoint(x: rect.maxX, y: topY))
 
-        // Lower-left skirt: convex arc rolling outward to the base.
-        path.addArc(
-            tangent1End: CGPoint(x: rect.minX + s, y: rect.maxY),
-            tangent2End: CGPoint(x: rect.minX + s + k, y: rect.maxY),
-            radius: k
-        )
-
-        // Base segment connecting the two skirts.
-        path.addLine(to: CGPoint(x: rect.maxX - s - k, y: rect.maxY))
-
-        // Lower-right skirt: convex arc mirroring the left side.
-        path.addArc(
-            tangent1End: CGPoint(x: rect.maxX - s, y: rect.maxY),
-            tangent2End: CGPoint(x: rect.maxX - s, y: rect.maxY - k),
-            radius: k
-        )
-
-        // Right flank ascends to the right shoulder.
-        path.addLine(to: CGPoint(x: rect.maxX - s, y: rect.minY + s))
-
-        // Top-right shoulder: concave arc returning to the screen edge.
-        path.addArc(
-            tangent1End: CGPoint(x: rect.maxX - s, y: rect.minY),
-            tangent2End: CGPoint(x: rect.maxX, y: rect.minY),
+        // ── Right half ───────────────────────────────────────────────
+        path.addArc(                                       // shoulder concave
+            tangent1End: CGPoint(x: rightFlank, y: topY),
+            tangent2End: CGPoint(x: rightFlank, y: topY + s),
             radius: s
         )
+        path.addLine(to: CGPoint(x: rightFlank, y: baseY - k))
+        path.addArc(                                       // skirt convex
+            tangent1End: CGPoint(x: rightFlank, y: baseY),
+            tangent2End: CGPoint(x: rightFlank - k, y: baseY),
+            radius: k
+        )
+        path.addLine(to: CGPoint(x: rect.midX, y: baseY))
 
         path.closeSubpath()
         return path
@@ -89,7 +91,7 @@ struct BrowSilhouette: Shape {
 
 #Preview {
     VStack(spacing: 24) {
-        BrowSilhouette(shoulderRadius: 6, skirtRadius: 12)
+        BrowSilhouette(shoulderRadius: 5, skirtRadius: 12)
             .fill(Color.black)
             .frame(width: 220, height: 32)
 

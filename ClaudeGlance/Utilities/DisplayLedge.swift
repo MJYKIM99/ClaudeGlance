@@ -36,31 +36,33 @@ extension NSScreen {
 
     /// Width × height of the camera ledge in points.
     ///
-    /// Strategy: the menu bar is split by the ledge into two auxiliary
-    /// regions (`auxiliaryTopLeftArea` and `auxiliaryTopRightArea`). The
-    /// horizontal distance between their inner edges *is* the ledge width.
-    /// Falls back to a conservative pill size on displays without a real
-    /// ledge so the HUD still has a sensible footprint.
+    /// Strategy: the cutout is horizontally centered on the display, so
+    /// we recover its footprint by measuring how far one auxiliary
+    /// status-bar region sits from the display centerline and mirroring
+    /// across that line. This avoids relying on full-width arithmetic
+    /// and works even when only one auxiliary region is reported.
     var ledgeSize: CGSize {
         let fallback = CGSize(width: 220, height: 32)
         guard hasHardwareLedge else { return fallback }
 
         let height = safeAreaInsets.top
-        let leftAux = auxiliaryTopLeftArea
-        let rightAux = auxiliaryTopRightArea
+        let centerline = frame.midX
+        let halfSpan: CGFloat
 
-        // Inner-edge measurement. Both regions share the screen's
-        // coordinate space, so the right region's leading edge minus the
-        // left region's trailing edge equals the ledge cutout width.
-        if let left = leftAux, let right = rightAux {
-            let inner = right.minX - left.maxX
-            // Conservative floor in case AppKit reports a too-small gap.
-            let width = max(inner, 180)
-            return CGSize(width: width, height: height)
+        if let trailing = auxiliaryTopRightArea?.minX {
+            // Trailing region's leading edge is the cutout's right edge.
+            halfSpan = max(0, trailing - centerline)
+        } else if let leading = auxiliaryTopLeftArea?.maxX {
+            // Fall back to the leading region if the trailing one is
+            // unavailable; the cutout is symmetric so either side works.
+            halfSpan = max(0, centerline - leading)
+        } else {
+            return CGSize(width: 200, height: height)
         }
 
-        // Auxiliary regions weren't reported (rare). Use a sane default
-        // sized to the typical 14"/16" MacBook Pro ledge.
-        return CGSize(width: 200, height: height)
+        // Mirror across the centerline. Floor to a usable footprint in
+        // case AppKit reports a degenerately narrow span.
+        let footprint = max(halfSpan * 2, 180)
+        return CGSize(width: footprint, height: height)
     }
 }
