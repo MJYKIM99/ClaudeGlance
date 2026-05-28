@@ -33,6 +33,7 @@ enum SessionStatus: String, Codable {
 // MARK: - Session State
 struct SessionState: Identifiable, Codable {
     let id: String
+    var platform: AgentPlatform = .claudeCode
     var terminal: String
     var project: String
     var cwd: String
@@ -124,6 +125,7 @@ struct SessionState: Identifiable, Codable {
 
     init(
         id: String,
+        platform: AgentPlatform = .claudeCode,
         terminal: String = "Terminal",
         project: String = "",
         cwd: String = "",
@@ -136,6 +138,7 @@ struct SessionState: Identifiable, Codable {
         displayAfter: Date = Date()
     ) {
         self.id = id
+        self.platform = platform
         self.terminal = terminal
         self.project = project
         self.cwd = cwd
@@ -178,6 +181,7 @@ enum ToolStatus: String, Codable {
 // MARK: - Hook Message (from our shell script)
 struct HookMessage: Codable {
     let sessionId: String
+    let platform: AgentPlatform
     let terminal: String
     let project: String
     let cwd: String
@@ -186,7 +190,20 @@ struct HookMessage: Codable {
 
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
+        case platform
         case terminal, project, cwd, event, data
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        sessionId = try container.decode(String.self, forKey: .sessionId)
+        let platformValue = try container.decodeIfPresent(String.self, forKey: .platform)
+        platform = AgentPlatform.parse(platformValue)
+        terminal = try container.decodeIfPresent(String.self, forKey: .terminal) ?? platform.displayName
+        project = try container.decodeIfPresent(String.self, forKey: .project) ?? ""
+        cwd = try container.decodeIfPresent(String.self, forKey: .cwd) ?? ""
+        event = try container.decode(String.self, forKey: .event)
+        data = try container.decode(ClaudeHookData.self, forKey: .data)
     }
 }
 
@@ -199,20 +216,30 @@ struct ClaudeHookData: Codable {
 
     // PreToolUse / PostToolUse fields
     let toolName: String?
+    let tool: String?
+    let name: String?
     let toolInput: [String: AnyCodableValue]?
+    let arguments: [String: AnyCodableValue]?
 
     // Notification fields
     let message: String?
     let notificationType: String?
+    let prompt: String?
+    let status: String?
 
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
         case transcriptPath = "transcript_path"
         case hookEventName = "hook_event_name"
         case toolName = "tool_name"
+        case tool
+        case name
         case toolInput = "tool_input"
+        case arguments
         case message
         case notificationType = "notification_type"
+        case prompt
+        case status
     }
 
     init(from decoder: Decoder) throws {
@@ -221,9 +248,14 @@ struct ClaudeHookData: Codable {
         transcriptPath = try container.decodeIfPresent(String.self, forKey: .transcriptPath)
         hookEventName = try container.decodeIfPresent(String.self, forKey: .hookEventName)
         toolName = try container.decodeIfPresent(String.self, forKey: .toolName)
+        tool = try container.decodeIfPresent(String.self, forKey: .tool)
+        name = try container.decodeIfPresent(String.self, forKey: .name)
         toolInput = try container.decodeIfPresent([String: AnyCodableValue].self, forKey: .toolInput)
+        arguments = try container.decodeIfPresent([String: AnyCodableValue].self, forKey: .arguments)
         message = try container.decodeIfPresent(String.self, forKey: .message)
         notificationType = try container.decodeIfPresent(String.self, forKey: .notificationType)
+        prompt = try container.decodeIfPresent(String.self, forKey: .prompt)
+        status = try container.decodeIfPresent(String.self, forKey: .status)
     }
 }
 
@@ -275,5 +307,22 @@ enum AnyCodableValue: Codable {
     var stringValue: String? {
         if case .string(let value) = self { return value }
         return nil
+    }
+
+    var dictionaryValue: [String: AnyCodableValue]? {
+        if case .object(let value) = self { return value }
+        return nil
+    }
+
+    var scalarDescription: String {
+        switch self {
+        case .string(let value): return value
+        case .int(let value): return "\(value)"
+        case .double(let value): return "\(value)"
+        case .bool(let value): return value ? "true" : "false"
+        case .array: return "[...]"
+        case .object: return "{...}"
+        case .null: return ""
+        }
     }
 }

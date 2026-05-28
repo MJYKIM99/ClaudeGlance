@@ -41,4 +41,15 @@ enum Defaults {
     static let autoHideIdle          = "autoHideIdle"
     static let idleTimeout           = "idleTimeout"
     static let showToolHistory       = "showToolHistory"
+
+    // MARK: - Codex integration
+    static let codexSessionWatcherEnabled = "codexSessionWatcherEnabled"
+
+    // MARK: - Desktop pet
+    static let desktopPetEnabled     = "desktopPetEnabled"
+    static let desktopPetTheme       = "desktopPetTheme"
+    static let desktopPetAnimationSpeed = "desktopPetAnimationSpeed"
+    static let desktopPetPositionX   = "desktopPetPositionX"
+    static let desktopPetPositionY   = "desktopPetPositionY"
+    static let desktopPetScreenHash  = "desktopPetScreenHash"
 }

@@ -14,12 +14,15 @@ import os
 
 final class BrowOverlayWindow: NSWindowController {
     private let sessionManager: SessionManager
+    private let contextMenuProvider: (() -> NSMenu)?
     private let visibility = WindowVisibility()
     private let brow: BrowController
     private var subscriptions = Set<AnyCancellable>()
     private weak var host: RegionalHitHost<BrowSurface>?
     private var hostScreen: NSScreen
     private var displayFollowTimer: Timer?
+    private var rightClickMonitorGlobal: Any?
+    private var rightClickMonitorLocal: Any?
     private var lastSessionCount: Int = 0
     private var lastStatusByID: [String: SessionStatus] = [:]
     private var observedFirstEmission: Bool = false
@@ -59,8 +62,9 @@ final class BrowOverlayWindow: NSWindowController {
                       width: f.width, height: panelHostHeight)
     }
 
-    init(sessionManager: SessionManager, screen: NSScreen) {
+    init(sessionManager: SessionManager, screen: NSScreen, contextMenuProvider: (() -> NSMenu)? = nil) {
         self.sessionManager = sessionManager
+        self.contextMenuProvider = contextMenuProvider
         self.hostScreen = screen
 
         let ledge = Self.ledgeFootprint(for: screen)
@@ -101,11 +105,16 @@ final class BrowOverlayWindow: NSWindowController {
         visibility.isVisible = true
         observePhase()
         observeSessionFlow()
+        installContextMenuMonitors()
         startDisplayFollow()
     }
 
     required init?(coder: NSCoder) {
         fatalError("init(coder:) has not been implemented")
+    }
+
+    deinit {
+        removeContextMenuMonitors()
     }
 
     private func observePhase() {
@@ -115,7 +124,8 @@ final class BrowOverlayWindow: NSWindowController {
                 guard let self = self, let win = self.window else { return }
                 switch phase {
                 case .expanded:
-                    win.ignoresMouseEvents = false
+                    let passivePeek = self.brow.lastExpandReason == .peek
+                    win.ignoresMouseEvents = passivePeek
                     // CRITICAL: never call NSApp.activate(...) here. The
                     // overlay panel uses `.nonactivatingPanel` precisely
                     // so an event-driven peek does not yank the system
@@ -125,7 +135,7 @@ final class BrowOverlayWindow: NSWindowController {
                     // engaged the brow (hover/click/manual) do we take
                     // the key window. A passive `.peek` (triggered by a
                     // hook event) renders silently.
-                    if self.brow.lastExpandReason != .peek {
+                    if !passivePeek {
                         win.makeKey()
                     }
                 case .dormant, .peek:
@@ -202,8 +212,54 @@ final class BrowOverlayWindow: NSWindowController {
     func hide() {
         displayFollowTimer?.invalidate()
         displayFollowTimer = nil
+        removeContextMenuMonitors()
         brow.collapse()
         window?.orderOut(nil)
+    }
+
+    // MARK: - Fallback control menu
+
+    private func installContextMenuMonitors() {
+        removeContextMenuMonitors()
+
+        rightClickMonitorGlobal = NSEvent.addGlobalMonitorForEvents(matching: [.rightMouseDown]) { [weak self] _ in
+            DispatchQueue.main.async {
+                _ = self?.showContextMenuIfNeeded(at: NSEvent.mouseLocation)
+            }
+        }
+
+        rightClickMonitorLocal = NSEvent.addLocalMonitorForEvents(matching: [.rightMouseDown]) { [weak self] event in
+            if self?.showContextMenuIfNeeded(at: NSEvent.mouseLocation) == true {
+                return nil
+            }
+            return event
+        }
+    }
+
+    private func removeContextMenuMonitors() {
+        if let monitor = rightClickMonitorGlobal {
+            NSEvent.removeMonitor(monitor)
+            rightClickMonitorGlobal = nil
+        }
+        if let monitor = rightClickMonitorLocal {
+            NSEvent.removeMonitor(monitor)
+            rightClickMonitorLocal = nil
+        }
+    }
+
+    private func showContextMenuIfNeeded(at screenPoint: CGPoint) -> Bool {
+        let inBrowRegion = brow.contains(screenPoint, in: .dormant) || brow.contains(screenPoint, in: .expanded)
+        guard inBrowRegion,
+              let menu = contextMenuProvider?(),
+              let window,
+              let contentView = window.contentView else {
+            return false
+        }
+
+        let windowPoint = window.convertFromScreen(NSRect(origin: screenPoint, size: .zero)).origin
+        let localPoint = contentView.convert(windowPoint, from: nil)
+        menu.popUp(positioning: nil, at: localPoint, in: contentView)
+        return true
     }
 
     // MARK: - Follow the cursor across displays
