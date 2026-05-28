@@ -5,7 +5,7 @@
 <h1 align="center">Claude Glance</h1>
 
 <p align="center">
-  <strong>Multi-terminal Claude Code Status HUD for macOS</strong>
+  <strong>Multi-terminal Claude Code and Codex Status HUD for macOS</strong>
 </p>
 
 <p align="center">
@@ -33,13 +33,17 @@
 
 ---
 
-A native macOS application that provides a real-time floating HUD (Heads-Up Display) to monitor multiple Claude Code terminal sessions simultaneously.
+A native macOS application that provides a real-time floating HUD (Heads-Up Display) to monitor multiple Claude Code and Codex terminal sessions simultaneously.
 
 ## Features
 
-- **Multi-Terminal Tracking** - Monitor multiple Claude Code sessions at once
+- **Multi-Agent Tracking** - Monitor multiple Claude Code and Codex sessions at once
 - **Real-time Status Display** - See if Claude is reading, writing, thinking, or waiting
-- **Pixel Art Animations** - Beautiful 4x4 pixel grid with unique animations for each state
+- **Codex Support** - Installs Codex lifecycle hooks and watches local `~/.codex/sessions` JSONL logs as a fallback
+- **Desktop Pet** - Transparent animated companion with 8-frame generated sprite loops for idle, coding, editing, request, and report states
+- **Pet Controls** - Right-click the desktop pet or Notch HUD to change theme, animation speed, visibility, and settings when the menu bar icon is crowded out
+- **Pet Themes** - Switch between Pixel Robot, Orange Pixel Crab, and White Pixel Polar Bear desktop pet themes
+- **Pixel Art Animations** - Multi-frame generated sprite loops with crisp pixel rendering
 - **Auto-Install Hooks** - Hook scripts are bundled and automatically configured on first launch
 - **Robust Hook Management** - Auto-repairs settings.json on every launch, detects project-level config shadowing
 - **Hook Diagnostic Panel** - Detailed diagnostics in Settings: script status, global config, shadowed projects
@@ -96,8 +100,9 @@ The built app will be at:
 When you first launch ClaudeGlance, it automatically:
 
 1. Copies the hook script to `~/.claude/hooks/claude-glance-reporter.sh`
-2. Sets executable permissions (`chmod +x`)
-3. Updates `~/.claude/settings.json` with hook configuration
+2. Copies the same reporter to `~/.codex/hooks/claude-glance-reporter.sh`
+3. Sets executable permissions (`chmod +x`)
+4. Updates `~/.claude/settings.json` and `~/.codex/hooks.json` with hook configuration
 
 No manual setup required!
 
@@ -105,7 +110,7 @@ No manual setup required!
 
 1. Launch ClaudeGlance.app
 2. A grid icon (···) will appear in your menu bar
-3. Start using Claude Code in any terminal
+3. Start using Claude Code or Codex in any terminal
 4. The HUD will automatically display session status
 
 ### Menu Bar Options
@@ -114,14 +119,35 @@ No manual setup required!
 |--------|-------------|
 | Service Status | Shows if the IPC server is running |
 | Show/Hide HUD | Toggle the floating window |
+| Desktop Pet | Toggle the transparent companion window |
+| Pet Theme | Switch the generated sprite theme used by the desktop pet |
+| Pet Animation Speed | Choose Relaxed, Normal, or Snappy desktop pet playback |
+| Desktop Pet / Notch Right Click | Opens the same controls even when the menu bar icon is hidden |
 | Active Sessions | Live count of monitored sessions |
 | Today's Stats | Tool calls and sessions count |
 | Restart Service | Restart the IPC server if needed |
 | Settings | Configure appearance and behavior |
 
+Need a new pet theme? See [Desktop Pet Theme Guide](docs/desktop-pet-theme-guide.md).
+
+## Desktop Pet Themes
+
+Claude Glance includes three generated desktop pet themes:
+
+| Theme | States | Frames |
+|-------|--------|--------|
+| Pixel Robot | idle, coding, change, request, report | 8 frames per state |
+| Orange Pixel Crab | idle, coding, change, request, report | 8 frames per state |
+| White Pixel Polar Bear | idle, coding, change, request, report | 8 frames per state |
+
+Right-click the desktop pet to change theme, switch animation speed, hide/show
+the pet, open Settings, or toggle the Notch HUD. The Notch HUD has the same
+right-click fallback menu so Claude Glance is still reachable when macOS hides
+the menu bar icon because other apps have too many menu items.
+
 ## Manual Hook Configuration
 
-If automatic installation fails, manually configure `~/.claude/settings.json`:
+If automatic installation fails for Claude Code, manually configure `~/.claude/settings.json`:
 
 ```json
 {
@@ -174,24 +200,91 @@ If automatic installation fails, manually configure `~/.claude/settings.json`:
 }
 ```
 
+For Codex, ClaudeGlance writes equivalent lifecycle hooks to `~/.codex/hooks.json` using the same reporter with `--platform codex`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.codex/hooks/claude-glance-reporter.sh --platform codex SessionStart"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.codex/hooks/claude-glance-reporter.sh --platform codex PreToolUse"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.codex/hooks/claude-glance-reporter.sh --platform codex PostToolUse"
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.codex/hooks/claude-glance-reporter.sh --platform codex Notification"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "~/.codex/hooks/claude-glance-reporter.sh --platform codex Stop"
+          }
+        ]
+      }
+    ]
+  }
+}
+```
+
 ## Architecture
 
 ```
 ClaudeGlance/
 ├── ClaudeGlanceApp.swift    # App entry + AppDelegate
 ├── Models/
+│   ├── AgentPetTheme.swift  # Desktop pet theme definitions
 │   └── SessionState.swift   # Session state model
 ├── Services/
 │   ├── IPCServer.swift      # Unix Socket + HTTP server
+│   ├── CodexSessionWatcher.swift # Codex JSONL fallback watcher
 │   └── SessionManager.swift # Multi-session management
 ├── Views/
 │   ├── HUDWindowController.swift  # Floating window controller
+│   ├── AgentPetWindowController.swift # Transparent desktop pet
 │   ├── SessionCard.swift          # Session card
 │   ├── PixelSpinner.swift         # Pixel animation
 │   └── CodeRainEffect.swift       # Code rain effect
 └── Scripts/
     ├── install.sh                 # Installation script
-    └── claude-glance-reporter.sh  # Hook reporter script (bundled)
+    └── claude-glance-reporter.sh  # Claude Code / Codex hook reporter script (bundled)
 ```
 
 ## Communication Protocol
@@ -201,6 +294,7 @@ The HUD receives JSON messages via Unix Socket (`/tmp/claude-glance.sock`) or HT
 ```json
 {
   "session_id": "abc123",
+  "platform": "claude_code",
   "terminal": "iTerm2",
   "project": "my-project",
   "cwd": "/path/to/project",
@@ -218,20 +312,21 @@ The HUD receives JSON messages via Unix Socket (`/tmp/claude-glance.sock`) or HT
 
 - macOS 15.0+
 - Xcode 15.0+ (for building from source)
-- Claude Code CLI (tested with hooks API)
+- Claude Code CLI or Codex CLI (tested with hooks API / local session logs)
 
 ## Uninstall
 
 To completely remove Claude Glance:
 
 ```bash
-# Remove hook script
+# Remove hook scripts
 rm ~/.claude/hooks/claude-glance-reporter.sh
+rm ~/.codex/hooks/claude-glance-reporter.sh
 
 # Remove app
 rm -rf /Applications/ClaudeGlance.app
 
-# Manually remove hooks from ~/.claude/settings.json
+# Manually remove hooks from ~/.claude/settings.json and ~/.codex/hooks.json
 ```
 
 ## FAQ
@@ -242,17 +337,17 @@ rm -rf /Applications/ClaudeGlance.app
 
 ### Why does Claude Glance need hooks?
 
-Claude Glance uses Claude Code's hooks API to receive real-time status updates. The hooks notify the HUD when Claude starts/finishes tool operations.
+Claude Glance uses Claude Code and Codex lifecycle hooks to receive real-time status updates. For Codex, it also watches local `~/.codex/sessions` JSONL files as a fallback so Codex Desktop sessions can still appear even before hook trust/configuration is fully settled.
 
 ### Which terminals are supported?
 
-Any terminal that runs Claude Code CLI: Terminal.app, iTerm2, Warp, VS Code terminal, Cursor, Ghostty, WezTerm, Zed, etc.
+Any terminal that runs Claude Code or Codex CLI: Terminal.app, iTerm2, Warp, VS Code terminal, Cursor, Ghostty, WezTerm, Zed, etc.
 
 ### Why is the HUD not showing any sessions?
 
 1. Make sure ClaudeGlance.app is running (check for grid icon in menu bar)
 2. Check menu bar: "Service: Running" should be shown
-3. Verify hooks are installed: check `~/.claude/settings.json`
+3. Verify hooks are installed: check `~/.claude/settings.json` and `~/.codex/hooks.json`
 4. Check if the socket exists: `ls /tmp/claude-glance.sock`
 5. Try restarting Claude Code session
 
@@ -289,16 +384,20 @@ Created by **Kim**
 # 中文说明
 
 <p align="center">
-  <strong>macOS 多终端 Claude Code 状态悬浮窗</strong>
+  <strong>macOS 多终端 Claude Code / Codex 状态悬浮窗</strong>
 </p>
 
-一个 macOS 原生应用，用于实时显示多个 Claude Code 终端实例的运行状态。
+一个 macOS 原生应用，用于实时显示多个 Claude Code 与 Codex 终端/桌面会话的运行状态。
 
 ## 特性
 
-- **多终端追踪** - 同时监控多个 Claude Code 会话
-- **实时状态显示** - 查看 Claude 正在读取、写入、思考还是等待
-- **像素艺术动画** - 4x4 像素网格，不同状态展示不同动画效果
+- **多 Agent 追踪** - 同时监控多个 Claude Code 与 Codex 会话
+- **实时状态显示** - 查看 Agent 正在读取、写入、思考还是等待
+- **Codex 支持** - 安装 Codex lifecycle hooks，并监听本地 `~/.codex/sessions` JSONL 作为兜底
+- **桌面宠物** - 透明浮动桌宠，包含 idle、coding、change、request、report 五种状态
+- **桌宠主题** - 内置 Pixel Robot、Orange Pixel Crab、White Pixel Polar Bear 三个主题，每状态 8 帧
+- **桌宠右键菜单** - 右键桌宠或刘海 HUD 可切换主题、动画速度、显示状态和打开设置
+- **像素艺术动画** - 多帧生成式 sprite loop，保留清晰像素边缘
 - **自动安装 Hooks** - 首次启动时自动配置 hook 脚本，无需手动设置
 - **健壮的 Hook 管理** - 每次启动自动修复 settings.json，检测项目级配置遮蔽
 - **Hook 诊断面板** - 设置中详细诊断：脚本状态、全局配置、被遮蔽的项目
@@ -355,8 +454,9 @@ xcodebuild -scheme ClaudeGlance -configuration Release
 首次启动 ClaudeGlance 时，它会自动：
 
 1. 将 hook 脚本复制到 `~/.claude/hooks/claude-glance-reporter.sh`
-2. 设置可执行权限 (`chmod +x`)
-3. 更新 `~/.claude/settings.json` 中的 hook 配置
+2. 将同一 reporter 复制到 `~/.codex/hooks/claude-glance-reporter.sh`
+3. 设置可执行权限 (`chmod +x`)
+4. 更新 `~/.claude/settings.json` 和 `~/.codex/hooks.json` 中的 hook 配置
 
 完全无需手动设置！
 
@@ -364,7 +464,7 @@ xcodebuild -scheme ClaudeGlance -configuration Release
 
 1. 启动 ClaudeGlance.app
 2. 菜单栏会出现九宫格图标 (···)
-3. 在任意终端中使用 Claude Code
+3. 在任意终端中使用 Claude Code 或 Codex
 4. HUD 会自动显示会话状态
 
 ### 菜单栏选项
@@ -373,6 +473,10 @@ xcodebuild -scheme ClaudeGlance -configuration Release
 |------|------|
 | 服务状态 | 显示 IPC 服务器是否运行 |
 | 显示/隐藏 HUD | 切换悬浮窗口 |
+| 桌面宠物 | 显示或隐藏透明桌宠窗口 |
+| 桌宠主题 | 切换 Pixel Robot / Orange Pixel Crab / White Pixel Polar Bear |
+| 桌宠动画速度 | 在 Relaxed / Normal / Snappy 间切换播放速度 |
+| 桌宠 / 刘海右键 | 菜单栏图标被隐藏时，也能打开同一套控制菜单 |
 | 活动会话 | 当前监控的会话数量 |
 | 今日统计 | 工具调用和会话计数 |
 | 重启服务 | 需要时重启 IPC 服务器 |
@@ -382,7 +486,7 @@ xcodebuild -scheme ClaudeGlance -configuration Release
 
 - macOS 15.0+
 - Xcode 15.0+（从源码构建时需要）
-- Claude Code CLI
+- Claude Code CLI 或 Codex CLI
 
 ## 卸载
 
@@ -391,11 +495,12 @@ xcodebuild -scheme ClaudeGlance -configuration Release
 ```bash
 # 删除 hook 脚本
 rm ~/.claude/hooks/claude-glance-reporter.sh
+rm ~/.codex/hooks/claude-glance-reporter.sh
 
 # 删除应用
 rm -rf /Applications/ClaudeGlance.app
 
-# 手动从 ~/.claude/settings.json 中移除 hooks
+# 手动从 ~/.claude/settings.json 和 ~/.codex/hooks.json 中移除 hooks
 ```
 
 ## 许可证

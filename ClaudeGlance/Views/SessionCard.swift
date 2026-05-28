@@ -85,6 +85,9 @@ struct SessionCard: View {
 
                 Spacer()
 
+                // Agent platform标识
+                PlatformBadge(platform: session.platform)
+
                 // 展开指示器
                 if showToolHistory && !session.toolHistory.isEmpty {
                     Image(systemName: session.isExpanded ? "chevron.up" : "chevron.down")
@@ -230,6 +233,11 @@ struct ToolHistoryPanel: View {
         case "Write": return "square.and.pencil"
         case "Edit": return "pencil"
         case "Bash": return "terminal"
+        case "exec_command", "functions.exec_command": return "terminal"
+        case "apply_patch", "functions.apply_patch": return "square.and.pencil"
+        case "update_plan", "functions.update_plan": return "checklist"
+        case "web_search_call", "web.run": return "globe"
+        case "imagegen", "image_gen": return "photo"
         case "Glob": return "magnifyingglass"
         case "Grep": return "text.magnifyingglass"
         case "Task": return "person.2"
@@ -244,6 +252,11 @@ struct ToolHistoryPanel: View {
         case "Read", "Glob", "Grep": return .blue
         case "Write", "Edit": return .purple
         case "Bash": return .orange
+        case "exec_command", "functions.exec_command": return .orange
+        case "apply_patch", "functions.apply_patch": return .purple
+        case "update_plan", "functions.update_plan": return .mint
+        case "web_search_call", "web.run": return .green
+        case "imagegen", "image_gen": return .pink
         case "Task": return .cyan
         case "WebFetch", "WebSearch": return .green
         default: return .gray
@@ -254,6 +267,28 @@ struct ToolHistoryPanel: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
         return formatter.string(from: date)
+    }
+}
+
+// MARK: - Platform Badge
+struct PlatformBadge: View {
+    let platform: AgentPlatform
+
+    private var badgeColor: Color {
+        switch platform {
+        case .claudeCode: return .orange
+        case .codex: return .blue
+        }
+    }
+
+    var body: some View {
+        Text(platform.badge)
+            .font(.system(size: 9, weight: .bold, design: .monospaced))
+            .foregroundColor(badgeColor.opacity(0.88))
+            .frame(width: 24, height: 22)
+            .background(badgeColor.opacity(0.15))
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .help(platform.displayName)
     }
 }
 

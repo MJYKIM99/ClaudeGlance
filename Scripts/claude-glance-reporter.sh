@@ -3,7 +3,7 @@
 # claude-glance-reporter.sh
 # Claude Glance Hook Reporter
 #
-# 这个脚本通过 Claude Code hooks 将状态信息发送给 Claude Glance HUD
+# 这个脚本通过 Claude Code / Codex hooks 将状态信息发送给 Claude Glance HUD
 #
 # 使用方法:
 #   1. 将此脚本复制到 ~/.claude/hooks/
@@ -16,6 +16,7 @@ set -e
 GLANCE_SOCKET="/tmp/claude-glance.sock"
 GLANCE_HTTP="http://localhost:19847/api/status"
 PROTOCOL_VERSION=1
+PLATFORM="claude_code"
 
 # 获取会话标识
 get_session_id() {
@@ -50,7 +51,32 @@ get_terminal_name() {
 
 # 主逻辑
 main() {
-    local hook_event="$1"
+    local hook_event=""
+
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --platform)
+                PLATFORM="${2:-claude_code}"
+                shift 2
+                ;;
+            --platform=*)
+                PLATFORM="${1#--platform=}"
+                shift
+                ;;
+            --codex)
+                PLATFORM="codex"
+                shift
+                ;;
+            --claude|--claude-code)
+                PLATFORM="claude_code"
+                shift
+                ;;
+            *)
+                hook_event="$1"
+                shift
+                ;;
+        esac
+    done
 
     # 从 stdin 读取 hook 输入
     local hook_input
@@ -87,6 +113,7 @@ main() {
 
     local payload
     payload=$(
+        _GLANCE_PLATFORM="$PLATFORM" \
         _GLANCE_SID="$session_id" \
         _GLANCE_TERM="$terminal_name" \
         _GLANCE_PROJ="$project_name" \
@@ -100,20 +127,35 @@ import json, os
 e = os.environ.get
 try: data = json.loads(e("_GLANCE_INPUT", "{}"))
 except Exception: data = {}
+platform = e("_GLANCE_PLATFORM", "claude_code") or "claude_code"
+event = e("_GLANCE_EVT", "") or data.get("hook_event_name") or data.get("event") or ""
+session_id = (
+    data.get("session_id")
+    or data.get("conversation_id")
+    or data.get("thread_id")
+    or e("_GLANCE_SID", "")
+)
+cwd = data.get("cwd") or e("_GLANCE_CWD", "")
 print(json.dumps({
     "protocol_version": int(e("_GLANCE_PROTO", "1")),
-    "session_id": e("_GLANCE_SID", ""),
+    "platform": platform,
+    "session_id": session_id,
     "terminal": e("_GLANCE_TERM", "Terminal"),
     "project": e("_GLANCE_PROJ", ""),
-    "cwd": e("_GLANCE_CWD", ""),
+    "cwd": cwd,
     "timestamp": int(e("_GLANCE_TS", "0")),
-    "event": e("_GLANCE_EVT", ""),
+    "event": event,
     "data": data,
 }))
 '
     )
 
     # 发送到 HUD
+    if [[ "${GLANCE_DRY_RUN:-0}" == "1" ]]; then
+        echo "$payload"
+        return 0
+    fi
+
     send_to_hud "$payload"
 }
 

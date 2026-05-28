@@ -29,25 +29,33 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     var statusItem: NSStatusItem?
     var hudWindowController: HUDWindowController?
     var browOverlayWindow: BrowOverlayWindow?
+    var agentPetWindowController: AgentPetWindowController?
     var settingsWindowController: SettingsWindowController?
     let sessionManager = SessionManager()
     let ipcServer = IPCServer()
+    let codexSessionWatcher = CodexSessionWatcher()
     private var cancellables = Set<AnyCancellable>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         UserDefaults.standard.register(defaults: [
-            Defaults.browAutoPeekEnabled: true
+            Defaults.browAutoPeekEnabled: true,
+            Defaults.codexSessionWatcherEnabled: true,
+            Defaults.desktopPetEnabled: true,
+            Defaults.desktopPetTheme: AgentPetTheme.robot.rawValue,
+            Defaults.desktopPetAnimationSpeed: AgentPetAnimationSpeed.normal.rawValue
         ])
 
         setupMenuBar()
         setupHUDWindow()
         setupBrowOverlayIfEnabled()
+        setupAgentPetIfEnabled()
         observeDisplayChanges()
 
         // 自动安装 hook 脚本（在启动服务之前）
         autoInstallHookIfNeeded()
 
         startIPCServer()
+        startCodexSessionWatcher()
 
         // 请求通知权限
         UNUserNotificationCenter.current().delegate = self
@@ -64,6 +72,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     // 退出时清理资源
     func applicationWillTerminate(_ notification: Notification) {
+        codexSessionWatcher.stop()
         ipcServer.stop()
     }
 
@@ -76,7 +85,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     // MARK: - Menu Bar
     private func setupMenuBar() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
 
         if let button = statusItem?.button {
             button.image = createGridIcon()
@@ -105,6 +114,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         autoPeekItem.tag = 401
         autoPeekItem.state = UserDefaults.standard.bool(forKey: Defaults.browAutoPeekEnabled) ? .on : .off
         menu.addItem(autoPeekItem)
+
+        let petItem = NSMenuItem(title: "Desktop Pet", action: #selector(toggleAgentPet), keyEquivalent: "p")
+        petItem.tag = 402
+        petItem.state = UserDefaults.standard.bool(forKey: Defaults.desktopPetEnabled) ? .on : .off
+        menu.addItem(petItem)
+
+        let petThemeItem = NSMenuItem(title: "Pet Theme", action: nil, keyEquivalent: "")
+        petThemeItem.tag = 403
+        petThemeItem.submenu = makeAgentPetThemeMenu()
+        menu.addItem(petThemeItem)
+
+        let petSpeedItem = NSMenuItem(title: "Pet Animation Speed", action: nil, keyEquivalent: "")
+        petSpeedItem.tag = 404
+        petSpeedItem.submenu = makeAgentPetSpeedMenu()
+        menu.addItem(petSpeedItem)
 
         menu.addItem(NSMenuItem.separator())
 
@@ -419,6 +443,201 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         suppressFloatingHUD()
     }
 
+    // MARK: - Desktop Pet
+    private func setupAgentPetIfEnabled() {
+        guard UserDefaults.standard.bool(forKey: Defaults.desktopPetEnabled) else { return }
+        if agentPetWindowController == nil {
+            agentPetWindowController = AgentPetWindowController(
+                sessionManager: sessionManager,
+                contextMenuProvider: { [weak self] in
+                    self?.makeCompanionControlMenu() ?? NSMenu()
+                }
+            )
+        }
+        agentPetWindowController?.show()
+    }
+
+    @objc func toggleAgentPet() {
+        let enabled = !UserDefaults.standard.bool(forKey: Defaults.desktopPetEnabled)
+        setAgentPetEnabled(enabled)
+    }
+
+    func setAgentPetEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: Defaults.desktopPetEnabled)
+        if enabled {
+            setupAgentPetIfEnabled()
+        } else {
+            agentPetWindowController?.hide()
+        }
+        refreshCompanionMenuStates()
+    }
+
+    @objc func showAgentPet() {
+        setAgentPetEnabled(true)
+    }
+
+    @objc func hideAgentPet() {
+        setAgentPetEnabled(false)
+    }
+
+    func setBrowOverlayEnabled(_ enabled: Bool) {
+        UserDefaults.standard.set(enabled, forKey: Defaults.browHUDEnabled)
+        AppLog.brow.info("setBrowOverlayEnabled -> \(enabled ? "ON" : "OFF", privacy: .public)")
+
+        if enabled {
+            rebuildBrowOverlay()
+            suppressFloatingHUD()
+        } else {
+            browOverlayWindow?.hide()
+            browOverlayWindow = nil
+            restoreFloatingHUD()
+        }
+
+        refreshCompanionMenuStates()
+    }
+
+    private func makeAgentPetThemeMenu() -> NSMenu {
+        let menu = NSMenu()
+        for theme in AgentPetTheme.allCases {
+            let item = NSMenuItem(title: theme.displayName, action: #selector(selectAgentPetTheme(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = theme.rawValue
+            item.state = theme == AgentPetTheme.current ? .on : .off
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    private func makeAgentPetSpeedMenu() -> NSMenu {
+        let menu = NSMenu()
+        for speed in AgentPetAnimationSpeed.allCases {
+            let item = NSMenuItem(title: speed.displayName, action: #selector(selectAgentPetAnimationSpeed(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = speed.rawValue
+            item.state = speed == AgentPetAnimationSpeed.current ? .on : .off
+            menu.addItem(item)
+        }
+        return menu
+    }
+
+    func makeCompanionControlMenu() -> NSMenu {
+        let menu = NSMenu(title: "Claude Glance")
+
+        let title = NSMenuItem(title: "Claude Glance Controls", action: nil, keyEquivalent: "")
+        title.isEnabled = false
+        menu.addItem(title)
+        menu.addItem(NSMenuItem.separator())
+
+        let showHUDItem = NSMenuItem(title: "Show HUD", action: #selector(showHUD), keyEquivalent: "")
+        showHUDItem.target = self
+        menu.addItem(showHUDItem)
+
+        let hideHUDItem = NSMenuItem(title: "Hide HUD", action: #selector(hideHUD), keyEquivalent: "")
+        hideHUDItem.target = self
+        menu.addItem(hideHUDItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let petEnabled = UserDefaults.standard.bool(forKey: Defaults.desktopPetEnabled)
+        let petItem = NSMenuItem(
+            title: petEnabled ? "Hide Desktop Pet" : "Show Desktop Pet",
+            action: petEnabled ? #selector(hideAgentPet) : #selector(showAgentPet),
+            keyEquivalent: ""
+        )
+        petItem.target = self
+        menu.addItem(petItem)
+
+        let themeItem = NSMenuItem(title: "Pet Theme", action: nil, keyEquivalent: "")
+        themeItem.submenu = makeAgentPetThemeMenu()
+        menu.addItem(themeItem)
+
+        let speedItem = NSMenuItem(title: "Pet Animation Speed", action: nil, keyEquivalent: "")
+        speedItem.submenu = makeAgentPetSpeedMenu()
+        menu.addItem(speedItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let browEnabled = UserDefaults.standard.bool(forKey: Defaults.browHUDEnabled)
+        let browItem = NSMenuItem(
+            title: browEnabled ? "Turn Off Notch HUD" : "Turn On Notch HUD",
+            action: #selector(toggleBrowOverlay),
+            keyEquivalent: ""
+        )
+        browItem.target = self
+        menu.addItem(browItem)
+
+        let autoPeekItem = NSMenuItem(title: "Auto Expand on Activity", action: #selector(toggleBrowAutoPeek), keyEquivalent: "")
+        autoPeekItem.target = self
+        autoPeekItem.state = UserDefaults.standard.bool(forKey: Defaults.browAutoPeekEnabled) ? .on : .off
+        menu.addItem(autoPeekItem)
+
+        menu.addItem(NSMenuItem.separator())
+
+        let settingsItem = NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: "")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+
+        let quitItem = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "")
+        quitItem.target = self
+        menu.addItem(quitItem)
+
+        return menu
+    }
+
+    func refreshCompanionMenuStates() {
+        if let item = statusItem?.menu?.item(withTag: 402) {
+            item.state = UserDefaults.standard.bool(forKey: Defaults.desktopPetEnabled) ? .on : .off
+        }
+        if let item = statusItem?.menu?.item(withTag: 400) {
+            item.state = UserDefaults.standard.bool(forKey: Defaults.browHUDEnabled) ? .on : .off
+        }
+        if let item = statusItem?.menu?.item(withTag: 401) {
+            item.state = UserDefaults.standard.bool(forKey: Defaults.browAutoPeekEnabled) ? .on : .off
+        }
+        refreshAgentPetThemeMenu()
+        refreshAgentPetAnimationSpeedMenu()
+    }
+
+    @objc func selectAgentPetTheme(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let theme = AgentPetTheme(rawValue: rawValue) else { return }
+
+        UserDefaults.standard.set(theme.rawValue, forKey: Defaults.desktopPetTheme)
+        refreshCompanionMenuStates()
+        setupAgentPetIfEnabled()
+    }
+
+    private func refreshAgentPetThemeMenu() {
+        guard let themeMenu = statusItem?.menu?.item(withTag: 403)?.submenu else { return }
+        let currentTheme = AgentPetTheme.current
+
+        for item in themeMenu.items {
+            guard let rawValue = item.representedObject as? String,
+                  let theme = AgentPetTheme(rawValue: rawValue) else { continue }
+            item.state = theme == currentTheme ? .on : .off
+        }
+    }
+
+    @objc func selectAgentPetAnimationSpeed(_ sender: NSMenuItem) {
+        guard let rawValue = sender.representedObject as? String,
+              let speed = AgentPetAnimationSpeed(rawValue: rawValue) else { return }
+
+        UserDefaults.standard.set(speed.rawValue, forKey: Defaults.desktopPetAnimationSpeed)
+        refreshCompanionMenuStates()
+        setupAgentPetIfEnabled()
+    }
+
+    private func refreshAgentPetAnimationSpeedMenu() {
+        guard let speedMenu = statusItem?.menu?.item(withTag: 404)?.submenu else { return }
+        let currentSpeed = AgentPetAnimationSpeed.current
+
+        for item in speedMenu.items {
+            guard let rawValue = item.representedObject as? String,
+                  let speed = AgentPetAnimationSpeed(rawValue: rawValue) else { continue }
+            item.state = speed == currentSpeed ? .on : .off
+        }
+    }
+
     /// While the ledge overlay is active the floating ball would be a
     /// duplicate surface, so hide it. `manuallyHidden` keeps the auto-
     /// show-on-new-session logic from popping it back up.
@@ -446,7 +665,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
             return
         }
         AppLog.brow.info("Building overlay on screen frame=\(NSStringFromRect(screen.frame), privacy: .public) hasLedge=\(screen.hasHardwareLedge ? "YES" : "NO", privacy: .public)")
-        let overlay = BrowOverlayWindow(sessionManager: sessionManager, screen: screen)
+        let overlay = BrowOverlayWindow(
+            sessionManager: sessionManager,
+            screen: screen,
+            contextMenuProvider: { [weak self] in
+                self?.makeCompanionControlMenu() ?? NSMenu()
+            }
+        )
         overlay.show()
         browOverlayWindow = overlay
         AppLog.brow.info("✅ Overlay shown. window=\(String(describing: overlay.window), privacy: .public)")
@@ -471,26 +696,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         let enabled = !UserDefaults.standard.bool(forKey: Defaults.browAutoPeekEnabled)
         UserDefaults.standard.set(enabled, forKey: Defaults.browAutoPeekEnabled)
         AppLog.brow.info("toggleBrowAutoPeek -> \(enabled ? "ON" : "OFF", privacy: .public)")
-        if let item = statusItem?.menu?.item(withTag: 401) {
-            item.state = enabled ? .on : .off
-        }
+        refreshCompanionMenuStates()
     }
 
     @objc func toggleBrowOverlay() {
         let enabled = !UserDefaults.standard.bool(forKey: Defaults.browHUDEnabled)
-        UserDefaults.standard.set(enabled, forKey: Defaults.browHUDEnabled)
-        AppLog.brow.info("toggleBrowOverlay -> \(enabled ? "ON" : "OFF", privacy: .public)")
-        if enabled {
-            rebuildBrowOverlay()
-            suppressFloatingHUD()
-        } else {
-            browOverlayWindow?.hide()
-            browOverlayWindow = nil
-            restoreFloatingHUD()
-        }
-        if let item = statusItem?.menu?.item(withTag: 400) {
-            item.state = enabled ? .on : .off
-        }
+        setBrowOverlayEnabled(enabled)
     }
 
     // MARK: - IPC Server
@@ -506,6 +717,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         }
     }
 
+    private func startCodexSessionWatcher() {
+        codexSessionWatcher.onMessage = { [weak self] data in
+            self?.sessionManager.processEvent(data)
+        }
+        codexSessionWatcher.start()
+    }
+
     // MARK: - Auto Install Hook
     private func autoInstallHookIfNeeded() {
         AppLog.hooks.info("autoInstallHookIfNeeded() starting")
@@ -515,40 +733,42 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         }
         AppLog.hooks.info("✅ Bundled script: \(bundledURL.path, privacy: .public)")
 
-        let targetPath = HookInstaller.installedScriptPath
-        let settingsPath = NSString(string: "~/.claude/settings.json").expandingTildeInPath
-        AppLog.hooks.info("Target hook path: \(targetPath, privacy: .public)")
-        AppLog.hooks.info("Target settings path: \(settingsPath, privacy: .public)")
-
         do {
-            // 1. Script: prefer a symlink to the bundled script.
-            let needsScriptInstall: Bool
-            if HookInstaller.installedSymlinkPointsToBundle() {
-                needsScriptInstall = false
-                AppLog.hooks.info("Script is already a symlink to current bundle.")
-            } else if FileManager.default.fileExists(atPath: targetPath),
-                      let existing = try? String(contentsOfFile: targetPath, encoding: .utf8),
-                      existing == HookInstaller.bundledScriptContent() {
-                needsScriptInstall = false
-                AppLog.hooks.info("Script is plain file matching bundle.")
-            } else {
-                needsScriptInstall = true
-                AppLog.hooks.info("Script needs (re)install.")
-            }
+            for platform in AgentPlatform.allCases {
+                let targetPath = HookInstaller.installedScriptPath(for: platform)
+                let settingsPath = HookInstaller.settingsPath(for: platform)
+                AppLog.hooks.info("Target \(platform.displayName, privacy: .public) hook path: \(targetPath, privacy: .public)")
+                AppLog.hooks.info("Target \(platform.displayName, privacy: .public) settings path: \(settingsPath, privacy: .public)")
 
-            if needsScriptInstall {
-                try HookInstaller.installScript()
-                AppLog.hooks.info("✅ installScript() succeeded.")
-            }
+                // 1. Script: prefer a symlink to the bundled script.
+                let needsScriptInstall: Bool
+                if HookInstaller.installedSymlinkPointsToBundle(for: platform) {
+                    needsScriptInstall = false
+                    AppLog.hooks.info("\(platform.displayName, privacy: .public) script is already a symlink to current bundle.")
+                } else if FileManager.default.fileExists(atPath: targetPath),
+                          let existing = try? String(contentsOfFile: targetPath, encoding: .utf8),
+                          existing == HookInstaller.bundledScriptContent() {
+                    needsScriptInstall = false
+                    AppLog.hooks.info("\(platform.displayName, privacy: .public) script is plain file matching bundle.")
+                } else {
+                    needsScriptInstall = true
+                    AppLog.hooks.info("\(platform.displayName, privacy: .public) script needs (re)install.")
+                }
 
-            // 2. settings.json validation — patch every launch if needed.
-            let missing = HookInstaller.missingHookTypes(at: settingsPath)
-            if !missing.isEmpty {
-                AppLog.hooks.notice("settings.json missing hooks: \(missing.joined(separator: ","), privacy: .public). Repairing...")
-                try HookInstaller.updateSettingsJson(at: settingsPath)
-                AppLog.hooks.info("✅ settings.json hooks repaired.")
-            } else {
-                AppLog.hooks.info("settings.json already has all hooks.")
+                if needsScriptInstall {
+                    try HookInstaller.installScript(for: platform)
+                    AppLog.hooks.info("✅ \(platform.displayName, privacy: .public) installScript() succeeded.")
+                }
+
+                // 2. settings.json/hooks.json validation — patch every launch if needed.
+                let missing = HookInstaller.missingHookTypes(at: settingsPath, platform: platform)
+                if !missing.isEmpty {
+                    AppLog.hooks.notice("\(platform.displayName, privacy: .public) config missing hooks: \(missing.joined(separator: ","), privacy: .public). Repairing...")
+                    try HookInstaller.updateSettingsJson(at: settingsPath, platform: platform)
+                    AppLog.hooks.info("✅ \(platform.displayName, privacy: .public) hooks repaired.")
+                } else {
+                    AppLog.hooks.info("\(platform.displayName, privacy: .public) config already has all hooks.")
+                }
             }
         } catch {
             AppLog.hooks.error("❌ auto-install failed: \(String(describing: error), privacy: .public)")
@@ -605,7 +825,7 @@ class SettingsWindowController: NSWindowController {
         self.sessionManager = sessionManager
 
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 500, height: 450),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 520),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -655,7 +875,7 @@ struct SettingsView: View {
                     Label("About", systemImage: "info.circle")
                 }
         }
-        .frame(width: 480, height: 450)
+        .frame(width: 500, height: 520)
     }
 }
 
@@ -663,6 +883,10 @@ struct SettingsView: View {
 struct GeneralSettingsTab: View {
     @AppStorage(Defaults.soundEnabled) private var soundEnabled: Bool = true
     @AppStorage(Defaults.notificationsEnabled) private var notificationsEnabled: Bool = true
+    @AppStorage(Defaults.codexSessionWatcherEnabled) private var codexSessionWatcherEnabled: Bool = true
+    @AppStorage(Defaults.desktopPetEnabled) private var desktopPetEnabled: Bool = true
+    @AppStorage(Defaults.desktopPetTheme) private var desktopPetTheme: String = AgentPetTheme.robot.rawValue
+    @AppStorage(Defaults.desktopPetAnimationSpeed) private var desktopPetAnimationSpeed: String = AgentPetAnimationSpeed.normal.rawValue
     @State private var launchAtLogin: Bool = SMAppService.mainApp.status == .enabled
     @State private var loginItemError: String?
 
@@ -680,6 +904,34 @@ struct GeneralSettingsTab: View {
                     .foregroundStyle(.secondary)
             } header: {
                 Label("Notifications", systemImage: "bell")
+            }
+
+            Section {
+                Toggle("Watch Codex session logs", isOn: $codexSessionWatcherEnabled)
+                Text("Read local ~/.codex session JSONL files as a fallback when Codex hooks are not firing")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Toggle("Show desktop pet", isOn: $desktopPetEnabled)
+                Text("Display the transparent companion window that mirrors agent state")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Picker("Desktop pet theme", selection: $desktopPetTheme) {
+                    ForEach(AgentPetTheme.allCases) { theme in
+                        Text(theme.displayName).tag(theme.rawValue)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                Picker("Animation speed", selection: $desktopPetAnimationSpeed) {
+                    ForEach(AgentPetAnimationSpeed.allCases) { speed in
+                        Text(speed.displayName).tag(speed.rawValue)
+                    }
+                }
+                .pickerStyle(.menu)
+            } header: {
+                Label("Agent Integrations", systemImage: "sparkles")
             }
 
             Section {
@@ -717,6 +969,15 @@ struct GeneralSettingsTab: View {
         .scrollDisabled(true)
         .onAppear {
             launchAtLogin = SMAppService.mainApp.status == .enabled
+        }
+        .onChange(of: desktopPetEnabled) { _, enabled in
+            (NSApp.delegate as? AppDelegate)?.setAgentPetEnabled(enabled)
+        }
+        .onChange(of: desktopPetTheme) { _, _ in
+            (NSApp.delegate as? AppDelegate)?.refreshCompanionMenuStates()
+        }
+        .onChange(of: desktopPetAnimationSpeed) { _, _ in
+            (NSApp.delegate as? AppDelegate)?.refreshCompanionMenuStates()
         }
     }
 }
@@ -777,8 +1038,10 @@ struct AppearanceSettingsTab: View {
 struct ConnectionSettingsTab: View {
     @ObservedObject var ipcServer: IPCServer
     @State private var hookStatus: HookStatus = .unknown
+    @State private var codexHookStatus: HookStatus = .unknown
     @State private var isCheckingHook = false
     @State private var diagnostic: HookDiagnostic?
+    @State private var codexDiagnostic: HookDiagnostic?
     @State private var isInstallingForProjects = false
     var knownCwds: [String]
 
@@ -875,8 +1138,23 @@ struct ConnectionSettingsTab: View {
                         .buttonStyle(.borderless)
                     }
                 }
+
+                LabeledContent("Codex Hooks") {
+                    HStack {
+                        Text("~/.codex/hooks.json")
+                            .font(.system(.body, design: .monospaced))
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        if isCheckingHook {
+                            ProgressView()
+                                .scaleEffect(0.6)
+                        } else {
+                            HookStatusBadge(status: codexHookStatus)
+                        }
+                    }
+                }
             } header: {
-                Label("Hook Status", systemImage: "terminal")
+                Label("Agent Hook Status", systemImage: "terminal")
             }
 
             // 诊断详情
@@ -909,6 +1187,18 @@ struct ConnectionSettingsTab: View {
                                 Text(shortenPath(path))
                                     .font(.system(size: 10, design: .monospaced))
                                     .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+
+                    if let codexDiagnostic {
+                        LabeledContent("Codex Config") {
+                            if codexDiagnostic.globalSettingsOK {
+                                diagBadge(true, label: "All hooks configured")
+                            } else {
+                                Text("Missing: \(codexDiagnostic.globalMissingHooks.joined(separator: ", "))")
+                                    .font(.caption)
+                                    .foregroundStyle(.red)
                             }
                         }
                     }
@@ -963,11 +1253,15 @@ struct ConnectionSettingsTab: View {
 
         let cwds = knownCwds
         DispatchQueue.global(qos: .userInitiated).async {
-            let diag = HookChecker.runDiagnostic(knownCwds: cwds)
-            let status = HookChecker.checkHookInstallation(knownCwds: cwds)
+            let diag = HookChecker.runDiagnostic(knownCwds: cwds, platform: .claudeCode)
+            let status = HookChecker.checkHookInstallation(knownCwds: cwds, platform: .claudeCode)
+            let codexDiag = HookChecker.runDiagnostic(knownCwds: [], platform: .codex)
+            let codexStatus = HookChecker.checkHookInstallation(knownCwds: [], platform: .codex)
             DispatchQueue.main.async {
                 self.diagnostic = diag
                 self.hookStatus = status
+                self.codexDiagnostic = codexDiag
+                self.codexHookStatus = codexStatus
                 self.isCheckingHook = false
             }
         }
@@ -1048,21 +1342,20 @@ struct HookDiagnostic {
 // MARK: - Hook Checker
 struct HookChecker {
     static func checkHookInstallation() -> ConnectionSettingsTab.HookStatus {
-        let diag = runDiagnostic(knownCwds: [])
+        let diag = runDiagnostic(knownCwds: [], platform: .claudeCode)
         return statusFromDiagnostic(diag)
     }
 
-    static func checkHookInstallation(knownCwds: [String]) -> ConnectionSettingsTab.HookStatus {
-        let diag = runDiagnostic(knownCwds: knownCwds)
+    static func checkHookInstallation(knownCwds: [String], platform: AgentPlatform = .claudeCode) -> ConnectionSettingsTab.HookStatus {
+        let diag = runDiagnostic(knownCwds: knownCwds, platform: platform)
         return statusFromDiagnostic(diag)
     }
 
-    static func runDiagnostic(knownCwds: [String]) -> HookDiagnostic {
+    static func runDiagnostic(knownCwds: [String], platform: AgentPlatform = .claudeCode) -> HookDiagnostic {
         var diag = HookDiagnostic()
 
-        let hooksDir = NSString(string: "~/.claude/hooks").expandingTildeInPath
-        let scriptPath = (hooksDir as NSString).appendingPathComponent("claude-glance-reporter.sh")
-        let settingsPath = NSString(string: "~/.claude/settings.json").expandingTildeInPath
+        let scriptPath = HookInstaller.installedScriptPath(for: platform)
+        let settingsPath = HookInstaller.settingsPath(for: platform)
 
         // 脚本检查
         diag.scriptExists = FileManager.default.fileExists(atPath: scriptPath)
@@ -1071,7 +1364,7 @@ struct HookChecker {
         if diag.scriptExists {
             // Up-to-date if it's a symlink to the current bundled script,
             // OR a plain copy whose contents match.
-            if HookInstaller.installedSymlinkPointsToBundle() {
+            if HookInstaller.installedSymlinkPointsToBundle(for: platform) {
                 diag.scriptMatchesBundle = true
             } else if let bundled = HookInstaller.bundledScriptContent() {
                 let existing = (try? String(contentsOfFile: scriptPath, encoding: .utf8)) ?? ""
@@ -1080,10 +1373,11 @@ struct HookChecker {
         }
 
         // 全局 settings.json 检查
-        diag.globalMissingHooks = HookInstaller.missingHookTypes(at: settingsPath)
+        diag.globalMissingHooks = HookInstaller.missingHookTypes(at: settingsPath, platform: platform)
         diag.globalSettingsOK = diag.globalMissingHooks.isEmpty
 
         // 项目级遮蔽检查
+        guard platform == .claudeCode else { return diag }
         let uniqueCwds = Set(knownCwds)
         for cwd in uniqueCwds {
             let projectSettings = findProjectSettings(from: cwd)
@@ -1093,7 +1387,7 @@ struct HookChecker {
                    let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                    json["hooks"] != nil {
                     // 项目级有 hooks 字段，检查是否包含 glance hooks
-                    if !HookInstaller.settingsHasAllHooks(at: projectPath) {
+                    if !HookInstaller.settingsHasAllHooks(at: projectPath, platform: platform) {
                         diag.shadowedProjects.append(cwd)
                     }
                 }
@@ -1138,7 +1432,15 @@ struct HookChecker {
 // MARK: - Hook Installer
 struct HookInstaller {
     static let glanceCommand = "claude-glance-reporter.sh"
-    static let hookTypes = ["PreToolUse", "PostToolUse", "Notification", "Stop"]
+    static let claudeHookTypes = ["PreToolUse", "PostToolUse", "Notification", "Stop"]
+    static let codexHookTypes = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification", "Stop", "SubagentStop"]
+
+    static func hookTypes(for platform: AgentPlatform) -> [String] {
+        switch platform {
+        case .claudeCode: return claudeHookTypes
+        case .codex: return codexHookTypes
+        }
+    }
 
     static func install(completion: @escaping (Result<Void, Error>) -> Void) {
         DispatchQueue.global(qos: .userInitiated).async {
@@ -1175,14 +1477,48 @@ struct HookInstaller {
 
     /// Installed hook path: ~/.claude/hooks/claude-glance-reporter.sh
     static var installedScriptPath: String {
+        installedScriptPath(for: .claudeCode)
+    }
+
+    static func installedScriptPath(for platform: AgentPlatform) -> String {
+        let hooksDir: String
+        switch platform {
+        case .claudeCode:
+            hooksDir = NSString(string: "~/.claude/hooks").expandingTildeInPath
+        case .codex:
+            hooksDir = NSString(string: "~/.codex/hooks").expandingTildeInPath
+        }
+        return (hooksDir as NSString).appendingPathComponent("claude-glance-reporter.sh")
+    }
+
+    static func settingsPath(for platform: AgentPlatform) -> String {
+        switch platform {
+        case .claudeCode:
+            return NSString(string: "~/.claude/settings.json").expandingTildeInPath
+        case .codex:
+            return NSString(string: "~/.codex/hooks.json").expandingTildeInPath
+        }
+    }
+
+    static func command(for hookType: String, platform: AgentPlatform) -> String {
+        switch platform {
+        case .claudeCode:
+            return "~/.claude/hooks/claude-glance-reporter.sh --platform claude_code \(hookType)"
+        case .codex:
+            return "~/.codex/hooks/claude-glance-reporter.sh --platform codex \(hookType)"
+        }
+    }
+
+    /// Installed hook path: ~/.claude/hooks/claude-glance-reporter.sh
+    static var legacyInstalledScriptPath: String {
         let hooksDir = NSString(string: "~/.claude/hooks").expandingTildeInPath
         return (hooksDir as NSString).appendingPathComponent("claude-glance-reporter.sh")
     }
 
     /// True if the installed path is a symlink whose target equals the
     /// current bundled script path. Auto-tracks app updates.
-    static func installedSymlinkPointsToBundle() -> Bool {
-        let path = installedScriptPath
+    static func installedSymlinkPointsToBundle(for platform: AgentPlatform = .claudeCode) -> Bool {
+        let path = installedScriptPath(for: platform)
         guard let bundledURL = bundledScriptURL() else { return false }
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
               (attrs[.type] as? FileAttributeType) == .typeSymbolicLink,
@@ -1199,14 +1535,14 @@ struct HookInstaller {
 
     /// Install the hook script as a symlink to the bundled file. If
     /// symlinking fails (sandboxed write denied, etc.) fall back to copy.
-    static func installScript() throws {
+    static func installScript(for platform: AgentPlatform = .claudeCode) throws {
         guard let bundledURL = bundledScriptURL() else {
             throw NSError(domain: "ClaudeGlance", code: 1,
                           userInfo: [NSLocalizedDescriptionKey: "Hook script not found in app bundle"])
         }
 
-        let hooksDir = NSString(string: "~/.claude/hooks").expandingTildeInPath
-        let scriptPath = installedScriptPath
+        let scriptPath = installedScriptPath(for: platform)
+        let hooksDir = (scriptPath as NSString).deletingLastPathComponent
 
         try FileManager.default.createDirectory(atPath: hooksDir, withIntermediateDirectories: true)
 
@@ -1234,13 +1570,14 @@ struct HookInstaller {
     }
 
     private static func performInstallation() throws {
-        try installScript()
-        let settingsPath = NSString(string: "~/.claude/settings.json").expandingTildeInPath
-        try updateSettingsJson(at: settingsPath)
+        for platform in AgentPlatform.allCases {
+            try installScript(for: platform)
+            try updateSettingsJson(at: settingsPath(for: platform), platform: platform)
+        }
     }
 
     // 检查指定 settings.json 是否已包含所有 glance hooks
-    static func settingsHasAllHooks(at path: String) -> Bool {
+    static func settingsHasAllHooks(at path: String, platform: AgentPlatform = .claudeCode) -> Bool {
         guard FileManager.default.fileExists(atPath: path),
               let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -1248,7 +1585,7 @@ struct HookInstaller {
             return false
         }
 
-        for hookType in hookTypes {
+        for hookType in hookTypes(for: platform) {
             guard let hookArray = hooks[hookType] as? [[String: Any]] else { return false }
             let hasGlance = hookArray.contains { matcher in
                 guard let hooksList = matcher["hooks"] as? [[String: Any]] else { return false }
@@ -1262,15 +1599,15 @@ struct HookInstaller {
     }
 
     // 返回 settings.json 中缺失的 hook 类型
-    static func missingHookTypes(at path: String) -> [String] {
+    static func missingHookTypes(at path: String, platform: AgentPlatform = .claudeCode) -> [String] {
         guard FileManager.default.fileExists(atPath: path),
               let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
               let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let hooks = json["hooks"] as? [String: Any] else {
-            return hookTypes
+            return hookTypes(for: platform)
         }
 
-        return hookTypes.filter { hookType in
+        return hookTypes(for: platform).filter { hookType in
             guard let hookArray = hooks[hookType] as? [[String: Any]] else { return true }
             return !hookArray.contains { matcher in
                 guard let hooksList = matcher["hooks"] as? [[String: Any]] else { return false }
@@ -1281,7 +1618,7 @@ struct HookInstaller {
         }
     }
 
-    static func updateSettingsJson(at path: String) throws {
+    static func updateSettingsJson(at path: String, platform: AgentPlatform = .claudeCode) throws {
         var settings: [String: Any] = [:]
 
         if FileManager.default.fileExists(atPath: path) {
@@ -1293,11 +1630,11 @@ struct HookInstaller {
 
         var hooks = settings["hooks"] as? [String: Any] ?? [:]
 
-        for hookType in hookTypes {
+        for hookType in hookTypes(for: platform) {
             let glanceEntry: [String: Any] = [
                 "matcher": "*",
                 "hooks": [
-                    ["type": "command", "command": "~/.claude/hooks/claude-glance-reporter.sh \(hookType)"]
+                    ["type": "command", "command": command(for: hookType, platform: platform)]
                 ]
             ]
 
@@ -1330,7 +1667,7 @@ struct HookInstaller {
     static func installForProject(at projectDir: String) throws {
         let settingsPath = (projectDir as NSString).appendingPathComponent(".claude/settings.json")
         if FileManager.default.fileExists(atPath: settingsPath) {
-            try updateSettingsJson(at: settingsPath)
+            try updateSettingsJson(at: settingsPath, platform: .claudeCode)
         }
     }
 }

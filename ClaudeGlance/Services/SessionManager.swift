@@ -228,7 +228,7 @@ class SessionManager: ObservableObject {
 
     private func handleMessage(_ message: HookMessage) {
         // 使用 session_id 作为主键，每个终端独立显示
-        let sessionKey = message.sessionId
+        let sessionKey = "\(message.platform.sessionKeyPrefix):\(message.sessionId)"
 
         // 统计唯一会话数
         if !recordedSessionKeys.contains(sessionKey) {
@@ -240,7 +240,8 @@ class SessionManager: ObservableObject {
 
         var session = sessions[sessionKey] ?? SessionState(
             id: sessionKey,
-            terminal: message.terminal,
+            platform: message.platform,
+            terminal: normalizedTerminal(for: message),
             project: message.project,
             cwd: message.cwd,
             displayAfter: Date().addingTimeInterval(0.5)  // 新会话延迟 500ms 显示
@@ -248,7 +249,8 @@ class SessionManager: ObservableObject {
 
         let previousStatus = session.status
 
-        session.terminal = message.terminal
+        session.platform = message.platform
+        session.terminal = normalizedTerminal(for: message)
         session.project = message.project
         session.cwd = message.cwd
         if let tp = message.data.transcriptPath, !tp.isEmpty {
@@ -256,8 +258,19 @@ class SessionManager: ObservableObject {
         }
 
         switch message.event {
+        case "SessionStart":
+            session.status = .thinking
+            session.currentAction = "Starting session"
+            session.metadata = message.platform.displayName
+
+        case "UserPromptSubmit":
+            session.status = .thinking
+            session.currentAction = "Reading request"
+            session.metadata = formattedPrompt(message.data.prompt)
+
         case "PreToolUse":
-            let tool = message.data.toolName ?? "Unknown"
+            let tool = toolName(from: message.data)
+            let toolInput = toolInput(from: message.data)
             let timeSinceLastUpdate = Date().timeIntervalSince(session.lastUpdate)
 
             // 检查会话是否在静默期（Stop 后 SessionState.postStopSilentPeriod 秒内）
@@ -305,8 +318,8 @@ class SessionManager: ObservableObject {
             }
 
             session.status = mapToolToStatus(tool)
-            session.currentAction = formatAction(tool, message.data.toolInput)
-            session.metadata = formatMetadata(tool, message.data.toolInput)
+            session.currentAction = formatAction(tool, toolInput)
+            session.metadata = formatMetadata(tool, toolInput)
 
             // 统计工具调用
             todayStats.incrementToolCalls()
@@ -314,7 +327,8 @@ class SessionManager: ObservableObject {
             saveTodayStats()
 
         case "PostToolUse":
-            let tool = message.data.toolName ?? "Unknown"
+            let tool = toolName(from: message.data)
+            let toolInput = toolInput(from: message.data)
             session.status = .thinking
             session.currentAction = "Processing..."
 
@@ -324,11 +338,11 @@ class SessionManager: ObservableObject {
             }
             session.toolHistory.append(ToolEvent(
                 tool: tool,
-                target: formatMetadata(tool, message.data.toolInput),
+                target: formatMetadata(tool, toolInput),
                 status: .completed
             ))
 
-        case "Notification":
+        case "Notification", "PermissionRequest":
             let notificationMessage = message.data.message ?? "Waiting for input"
             let notificationType = message.data.notificationType ?? ""
 
@@ -345,7 +359,7 @@ class SessionManager: ObservableObject {
 
                 // 错误时播放提示音
                 if previousStatus != .error {
-                    playNotificationSound(.attention)
+                    playNotificationSound(.attention, platform: message.platform)
                 }
             } else {
                 session.status = .waiting
@@ -354,11 +368,16 @@ class SessionManager: ObservableObject {
 
                 // 需要用户交互时播放提示音
                 if previousStatus != .waiting {
-                    playNotificationSound(.attention)
+                    playNotificationSound(.attention, platform: message.platform)
                 }
             }
 
-        case "Stop":
+        case "AgentMessage":
+            session.status = .completed
+            session.currentAction = "Reporting update"
+            session.metadata = formattedPrompt(message.data.message)
+
+        case "Stop", "SubagentStop":
             // 检查是否是因为错误而停止
             let stopMessage = message.data.message ?? ""
             let isError = stopMessage.lowercased().contains("error") ||
@@ -371,7 +390,7 @@ class SessionManager: ObservableObject {
                 session.metadata = "Error"
 
                 if previousStatus != .error {
-                    playNotificationSound(.attention)
+                    playNotificationSound(.attention, platform: message.platform)
                 }
             } else {
                 // 一轮交互完成 - 显示完成状态，并记录 Stop 时间
@@ -393,7 +412,7 @@ class SessionManager: ObservableObject {
 
                 // 任务完成时播放提示音
                 if previousStatus != .completed {
-                    playNotificationSound(.completion)
+                    playNotificationSound(.completion, platform: message.platform)
                 }
             }
 
@@ -468,7 +487,7 @@ class SessionManager: ObservableObject {
         case completion  // 任务完成
     }
 
-    private func playNotificationSound(_ type: NotificationSoundType) {
+    private func playNotificationSound(_ type: NotificationSoundType, platform: AgentPlatform = .claudeCode) {
         // 同类型通知 10 秒内不重复
         let now = Date()
         if let last = lastNotificationTime[type], now.timeIntervalSince(last) < 10 {
@@ -498,13 +517,13 @@ class SessionManager: ObservableObject {
             let content = UNMutableNotificationContent()
             switch type {
             case .attention:
-                content.title = "Claude Needs Input"
-                content.body = "A Claude session is waiting for your response"
+                content.title = "\(platform.shortName) Needs Input"
+                content.body = "A \(platform.displayName) session is waiting for your response"
             case .completion:
-                content.title = "Claude Completed"
-                content.body = "A Claude session finished its task"
+                content.title = "\(platform.shortName) Completed"
+                content.body = "A \(platform.displayName) session finished its task"
             }
-            let notificationId = type == .attention ? "claude-glance-attention" : "claude-glance-completion"
+            let notificationId = "\(platform.rawValue)-\(type == .attention ? "attention" : "completion")"
             let request = UNNotificationRequest(
                 identifier: notificationId,
                 content: content,
@@ -522,11 +541,17 @@ class SessionManager: ObservableObject {
     // MARK: - Tool Mapping
     private func mapToolToStatus(_ tool: String) -> SessionStatus {
         switch tool {
-        case "Read", "Glob", "Grep", "WebFetch", "WebSearch":
+        case "Read", "Glob", "Grep", "WebFetch", "WebSearch",
+             "web_search_call", "web.run":
             return .reading
-        case "Write", "Edit", "NotebookEdit":
+        case "Write", "Edit", "NotebookEdit",
+             "apply_patch", "functions.apply_patch":
             return .writing
-        case "Bash", "Task", "TodoWrite":
+        case "Bash", "Task", "TodoWrite",
+             "exec_command", "functions.exec_command",
+             "write_stdin", "functions.write_stdin",
+             "update_plan", "functions.update_plan",
+             "imagegen", "image_gen":
             return .thinking
         default:
             return .thinking
@@ -563,6 +588,23 @@ class SessionManager: ObservableObject {
             return "Updating todos"
         case "NotebookEdit":
             return "Editing notebook"
+        case "exec_command", "functions.exec_command":
+            if let cmd = input?["cmd"]?.stringValue, !cmd.isEmpty {
+                return cmd.count > 40 ? "Running command" : cmd
+            }
+            return "Running command"
+        case "write_stdin", "functions.write_stdin":
+            return "Continuing command"
+        case "apply_patch", "functions.apply_patch":
+            return "Applying patch"
+        case "update_plan", "functions.update_plan":
+            return "Updating plan"
+        case "web_search_call", "web.run":
+            return "Searching web"
+        case "imagegen", "image_gen":
+            return "Generating image"
+        case "request_user_input", "functions.request_user_input":
+            return "Requesting input"
         default:
             return tool
         }
@@ -599,11 +641,48 @@ class SessionManager: ObservableObject {
                 return subtype
             }
 
+        case "exec_command", "functions.exec_command":
+            if let cmd = input["cmd"]?.stringValue {
+                let truncated = String(cmd.prefix(40))
+                return truncated + (cmd.count > 40 ? "..." : "")
+            }
+
+        case "apply_patch", "functions.apply_patch":
+            return "workspace"
+
+        case "web_search_call", "web.run":
+            if let query = input["query"]?.stringValue ?? input["search_query"]?.scalarDescription {
+                let truncated = String(query.prefix(40))
+                return truncated + (query.count > 40 ? "..." : "")
+            }
+
         default:
             break
         }
 
         return ""
+    }
+
+    private func normalizedTerminal(for message: HookMessage) -> String {
+        if message.platform == .codex {
+            return message.terminal.isEmpty || message.terminal == "Terminal" ? "Codex" : message.terminal
+        }
+        return message.terminal
+    }
+
+    private func toolName(from data: ClaudeHookData) -> String {
+        data.toolName ?? data.tool ?? data.name ?? "Unknown"
+    }
+
+    private func toolInput(from data: ClaudeHookData) -> [String: AnyCodableValue]? {
+        data.toolInput ?? data.arguments
+    }
+
+    private func formattedPrompt(_ prompt: String?) -> String {
+        guard let prompt, !prompt.isEmpty else { return "" }
+        let firstLine = prompt.components(separatedBy: .newlines).first ?? prompt
+        let trimmed = firstLine.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.count > 36 ? String(trimmed.prefix(36)) + "..." : trimmed
     }
 
     // MARK: - Session Cleanup
@@ -639,7 +718,7 @@ class SessionManager: ObservableObject {
                     AppLog.session.debug("Auto-completed stale session: \(key)")
 
                     // 播放完成提示音
-                    playNotificationSound(.completion)
+                    playNotificationSound(.completion, platform: session.platform)
                 }
             }
             // 对于 waiting 状态，waitingTimeout 秒后移除
@@ -681,6 +760,7 @@ class SessionManager: ObservableObject {
     func addDebugSession() {
         let session = SessionState(
             id: "debug-\(UUID().uuidString.prefix(4))",
+            platform: .claudeCode,
             terminal: "iTerm2",
             project: "ClaudeGlance",
             cwd: "/Users/yi/Documents/code",
