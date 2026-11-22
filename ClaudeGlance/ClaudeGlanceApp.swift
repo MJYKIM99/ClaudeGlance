@@ -83,6 +83,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         completionHandler([.banner, .sound])
     }
 
+    /// 点击通知横幅：展示 HUD 并聚焦对应会话的终端
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        if let sessionKey = response.notification.request.content.userInfo["sessionKey"] as? String {
+            hudWindowController?.showWindow(nil)
+            hudWindowController?.manuallyHidden = false
+            sessionManager.focusTerminal(sessionId: sessionKey)
+        }
+        completionHandler()
+    }
+
     // MARK: - Menu Bar
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)

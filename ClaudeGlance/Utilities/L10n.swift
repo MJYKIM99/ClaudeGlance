@@ -92,6 +92,13 @@ enum L10n {
         "Not Running": "未运行",
         "today": "今日",
         "no data": "无数据",
+        // Card actions
+        "Pin to Top": "置顶",
+        "Unpin from Top": "取消置顶",
+        "Set Label...": "设置标签…",
+        "Remove Label": "移除标签",
+        "Session Label": "会话标签",
+        "events": "条记录",
     ]
 
     /// Translate a HUD string. Unknown keys fall back to the source
@@ -111,5 +118,9 @@ enum L10n {
 
     static func toolFailed(_ tool: String) -> String {
         AppLanguage.current == .chinese ? "工具失败: \(tool)" : "Tool failed: \(tool)"
+    }
+
+    static func historyCount(_ count: Int) -> String {
+        AppLanguage.current == .chinese ? "\(count) 条记录" : "\(count) events"
     }
 }

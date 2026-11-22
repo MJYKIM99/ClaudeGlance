@@ -347,7 +347,7 @@ class SessionManager: ObservableObject {
             session.currentAction = L10n.tr("Processing...")
 
             // 添加到历史
-            if session.toolHistory.count >= 10 {
+            if session.toolHistory.count >= 50 {
                 session.toolHistory.removeFirst()
             }
             session.toolHistory.append(ToolEvent(
@@ -364,7 +364,7 @@ class SessionManager: ObservableObject {
             let toolInput = toolInput(from: message.data)
             session.status = .thinking
             session.currentAction = L10n.toolFailed(tool)
-            if session.toolHistory.count >= 10 {
+            if session.toolHistory.count >= 50 {
                 session.toolHistory.removeFirst()
             }
             session.toolHistory.append(ToolEvent(
@@ -395,7 +395,7 @@ class SessionManager: ObservableObject {
 
                 // 错误时播放提示音
                 if previousStatus != .error {
-                    playNotificationSound(.attention, platform: message.platform)
+                    playNotificationSound(.attention, platform: message.platform, session: session)
                 }
             } else {
                 session.status = .waiting
@@ -404,7 +404,7 @@ class SessionManager: ObservableObject {
 
                 // 需要用户交互时播放提示音
                 if previousStatus != .waiting {
-                    playNotificationSound(.attention, platform: message.platform)
+                    playNotificationSound(.attention, platform: message.platform, session: session)
                 }
             }
 
@@ -423,7 +423,7 @@ class SessionManager: ObservableObject {
             session.currentAction = failureMessage
             session.metadata = message.data.error ?? "Error"
             if previousStatus != .error {
-                playNotificationSound(.attention, platform: message.platform)
+                playNotificationSound(.attention, platform: message.platform, session: session)
             }
 
         case "Interrupt":
@@ -446,7 +446,7 @@ class SessionManager: ObservableObject {
                 session.metadata = "Error"
 
                 if previousStatus != .error {
-                    playNotificationSound(.attention, platform: message.platform)
+                    playNotificationSound(.attention, platform: message.platform, session: session)
                 }
             } else {
                 // 一轮交互完成 - 显示完成状态，并记录 Stop 时间
@@ -468,7 +468,7 @@ class SessionManager: ObservableObject {
 
                 // 任务完成时播放提示音
                 if previousStatus != .completed {
-                    playNotificationSound(.completion, platform: message.platform)
+                    playNotificationSound(.completion, platform: message.platform, session: session)
                 }
             }
 
@@ -543,7 +543,7 @@ class SessionManager: ObservableObject {
         case completion  // 任务完成
     }
 
-    private func playNotificationSound(_ type: NotificationSoundType, platform: AgentPlatform = .claudeCode) {
+    private func playNotificationSound(_ type: NotificationSoundType, platform: AgentPlatform = .claudeCode, session: SessionState? = nil) {
         // 同类型通知 10 秒内不重复
         let now = Date()
         if let last = lastNotificationTime[type], now.timeIntervalSince(last) < 10 {
@@ -571,15 +571,23 @@ class SessionManager: ObservableObject {
         // macOS Notification Center
         if UserDefaults.standard.bool(forKey: Defaults.notificationsEnabled) {
             let content = UNMutableNotificationContent()
+            // 带上会话上下文：通知正文显示项目+当前动作，点击可跳回终端
+            if let session {
+                content.userInfo["sessionKey"] = session.id
+                content.subtitle = session.project
+            }
             switch type {
             case .attention:
                 content.title = "\(platform.shortName) Needs Input"
-                content.body = "A \(platform.displayName) session is waiting for your response"
+                content.body = session?.currentAction
+                    ?? "A \(platform.displayName) session is waiting for your response"
             case .completion:
                 content.title = "\(platform.shortName) Completed"
-                content.body = "A \(platform.displayName) session finished its task"
+                content.body = session?.currentAction
+                    ?? "A \(platform.displayName) session finished its task"
             }
-            let notificationId = "\(platform.rawValue)-\(type == .attention ? "attention" : "completion")"
+            // 每个会话独立 identifier，避免不同会话互相覆盖
+            let notificationId = "\(session?.id ?? platform.rawValue)-\(type == .attention ? "attention" : "completion")"
             let request = UNNotificationRequest(
                 identifier: notificationId,
                 content: content,
@@ -719,6 +727,28 @@ class SessionManager: ObservableObject {
         return ""
     }
 
+    // MARK: - Label & Pin
+    func setLabel(_ label: String?, for sessionId: String) {
+        guard var session = sessions[sessionId] else { return }
+        let trimmed = label?.trimmingCharacters(in: .whitespacesAndNewlines)
+        session.label = (trimmed?.isEmpty == false) ? trimmed : nil
+        sessions[sessionId] = session
+        updateActiveSessions()
+    }
+
+    func togglePin(sessionId: String) {
+        guard var session = sessions[sessionId] else { return }
+        session.pinned.toggle()
+        sessions[sessionId] = session
+        updateActiveSessions()
+    }
+
+    /// 通知点击等外部入口：按 sessionKey 聚焦终端
+    func focusTerminal(sessionId: String) {
+        guard let session = sessions[sessionId] else { return }
+        focusTerminal(for: session)
+    }
+
     // MARK: - Focus Terminal
     /// Bring the terminal app that owns this session to the front.
     /// `session.terminal` carries $TERM_PROGRAM (Apple_Terminal,
@@ -812,7 +842,7 @@ class SessionManager: ObservableObject {
                     AppLog.session.debug("Auto-completed stale session: \(key)")
 
                     // 播放完成提示音
-                    playNotificationSound(.completion, platform: session.platform)
+                    playNotificationSound(.completion, platform: session.platform, session: session)
                 }
             }
             // 对于 waiting 状态，waitingTimeout 秒后降级为 idle 保留

@@ -13,6 +13,9 @@ struct SessionCard: View {
     var onTap: (() -> Void)?
     var onDismiss: (() -> Void)?
     var onFocusTerminal: (() -> Void)?
+    var onSetLabel: (() -> Void)?
+    var onRemoveLabel: (() -> Void)?
+    var onTogglePin: (() -> Void)?
 
     @State private var animatedStatus: SessionStatus = .idle
     @State private var isHovering = false
@@ -59,7 +62,17 @@ struct SessionCard: View {
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
         .contextMenu {
+            if let onTogglePin {
+                Button(session.pinned ? L10n.tr("Unpin from Top") : L10n.tr("Pin to Top")) { onTogglePin() }
+            }
+            if let onSetLabel {
+                Button(L10n.tr("Set Label...")) { onSetLabel() }
+            }
+            if session.label != nil, let onRemoveLabel {
+                Button(L10n.tr("Remove Label")) { onRemoveLabel() }
+            }
             if let onFocusTerminal {
+                Divider()
                 Button(L10n.tr("Focus Terminal")) { onFocusTerminal() }
                 Divider()
             }
@@ -106,6 +119,20 @@ struct SessionCard: View {
             VStack(alignment: .leading, spacing: 2) {
                 // 主标题：状态用彩色圆点表达，文字统一正文色（半透明背景上彩色文字看不清）
                 HStack(spacing: 6) {
+                    if session.pinned {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                    }
+                    if let label = session.label {
+                        Text(label)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.accentColor.opacity(0.85))
+                            .clipShape(Capsule())
+                    }
                     if session.isStillThinking {
                         Circle().fill(.yellow).frame(width: 7, height: 7)
                         Text(L10n.tr("Still thinking..."))
@@ -207,9 +234,24 @@ struct SessionCard: View {
     // MARK: - Compact row (completed / idle sessions)
     private var compactRow: some View {
         HStack(spacing: 8) {
+            if session.pinned {
+                Image(systemName: "pin.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+            }
             Image(systemName: session.status == .completed ? "checkmark.circle.fill" : "pause.circle")
                 .font(.system(size: 12))
                 .foregroundColor(session.status == .completed ? .green.opacity(0.8) : Color.secondary.opacity(0.7))
+
+            if let label = session.label {
+                Text(label)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Color.accentColor.opacity(0.85))
+                    .clipShape(Capsule())
+            }
 
             Text(session.currentAction)
                 .font(.system(size: 12))
@@ -261,7 +303,10 @@ struct ToolHistoryPanel: View {
             Divider()
                 .background(Color.primary.opacity(0.08))
 
-            ForEach(history.suffix(5).reversed()) { event in
+            // 完整时间线：超过 ~8 条时内部滚动
+            ScrollView(.vertical, showsIndicators: history.count > 8) {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(history.reversed()) { event in
                 HStack(spacing: 8) {
                     // 工具图标
                     Image(systemName: iconForTool(event.tool))
@@ -297,6 +342,15 @@ struct ToolHistoryPanel: View {
                         .font(.system(size: 9, design: .monospaced))
                         .foregroundStyle(.tertiary)
                 }
+                    }
+                }
+            }
+            .frame(maxHeight: history.count > 8 ? 168 : nil, alignment: .top)
+
+            if history.count > 8 {
+                Text(L10n.historyCount(history.count))
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(.tertiary)
             }
         }
         .padding(.horizontal, 10)
@@ -472,4 +526,30 @@ struct TerminalBadge: View {
     }
     .padding()
     .background(Color.black)
+}
+
+// MARK: - Label Prompt
+/// 弹一个 NSAlert 让用户输入会话标签（HUD 是无边框 panel，不能挂 sheet，
+/// 用 runModal 独立弹窗）。
+enum SessionCardLabelPrompt {
+    static func ask(session: SessionState, completion: @escaping (String?) -> Void) {
+        NSApp.activate(ignoringOtherApps: true)
+
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("Session Label")
+        alert.informativeText = session.project.isEmpty ? session.id : session.project
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: L10n.tr("Dismiss"))
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        field.stringValue = session.label ?? ""
+        field.placeholderString = L10n.tr("Session Label")
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            completion(text.isEmpty ? nil : text)
+        }
+    }
 }

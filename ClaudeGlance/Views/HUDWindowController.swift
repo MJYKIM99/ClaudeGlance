@@ -198,8 +198,9 @@ class HUDWindowController: NSWindowController {
                 height += (session.status == .completed || session.status == .idle) && !session.isExpanded
                     ? compactCardHeight : fullCardHeight
                 if session.isExpanded && !session.toolHistory.isEmpty {
-                    let rows = CGFloat(min(session.toolHistory.count, 5))
-                    height += 17 + rows * 20
+                    // 完整时间线面板：最多 ~8 行内部滚动 + 分隔线/计数行
+                    let rows = CGFloat(min(session.toolHistory.count, 8))
+                    height += 26 + rows * 20 + (session.toolHistory.count > 8 ? 14 : 0)
                 }
                 if idx < sessions.count - 1 { height += spacing }
             }
@@ -317,6 +318,17 @@ struct HUDContentView: View {
                                 },
                                 onFocusTerminal: {
                                     sessionManager.focusTerminal(for: session)
+                                },
+                                onSetLabel: {
+                                    SessionCardLabelPrompt.ask(session: session) { label in
+                                        sessionManager.setLabel(label, for: session.id)
+                                    }
+                                },
+                                onRemoveLabel: {
+                                    sessionManager.setLabel(nil, for: session.id)
+                                },
+                                onTogglePin: {
+                                    sessionManager.togglePin(sessionId: session.id)
                                 }
                             )
                             .transition(.asymmetric(

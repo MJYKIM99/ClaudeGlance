@@ -46,6 +46,11 @@ struct SessionState: Identifiable, Codable {
     var isExpanded: Bool = false
     var transcriptPath: String = ""
 
+    // 用户自定义标签（右键设置，仅内存保留）
+    var label: String? = nil
+    // 置顶：不被优先级排序挤下去
+    var pinned: Bool = false
+
     // 延迟显示：新会话需要等待一段时间才显示（过滤快速的预测操作）
     var displayAfter: Date = Date()
 
@@ -100,8 +105,10 @@ struct SessionState: Identifiable, Codable {
         }
     }
 
-    /// Display priority: sessions needing a human come first.
+    /// Display priority: pinned sessions always first, then sessions
+    /// needing a human.
     var displayRank: Int {
+        if pinned { return -1 }
         switch status {
         case .error: return 0
         case .waiting: return 1

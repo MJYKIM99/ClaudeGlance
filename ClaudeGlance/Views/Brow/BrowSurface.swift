@@ -279,6 +279,17 @@ struct BrowSurface: View {
                             },
                             onFocusTerminal: {
                                 sessionManager.focusTerminal(for: session)
+                            },
+                            onSetLabel: {
+                                SessionCardLabelPrompt.ask(session: session) { label in
+                                    sessionManager.setLabel(label, for: session.id)
+                                }
+                            },
+                            onRemoveLabel: {
+                                sessionManager.setLabel(nil, for: session.id)
+                            },
+                            onTogglePin: {
+                                sessionManager.togglePin(sessionId: session.id)
                             }
                         )
                     }
