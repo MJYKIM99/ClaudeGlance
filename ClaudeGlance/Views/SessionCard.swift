@@ -361,9 +361,9 @@ struct PlatformBadge: View {
     var body: some View {
         Text(platform.badge)
             .font(.system(size: 9, weight: .bold, design: .monospaced))
-            .foregroundColor(badgeColor.opacity(0.88))
+            .foregroundColor(.white)
             .frame(width: 24, height: 22)
-            .background(badgeColor.opacity(0.15))
+            .background(badgeColor.opacity(0.85))
             .clipShape(RoundedRectangle(cornerRadius: 5))
             .help(platform.displayName)
     }
@@ -426,11 +426,12 @@ struct TerminalBadge: View {
     }
 
     var body: some View {
+        // 实心色块 + 白字：半透明 HUD 背景上清晰可读
         Text(abbreviation)
             .font(.system(size: 9, weight: .bold, design: .monospaced))
-            .foregroundColor(badgeColor.opacity(0.8))
+            .foregroundColor(.white)
             .frame(width: 22, height: 22)
-            .background(badgeColor.opacity(0.15))
+            .background(badgeColor.opacity(0.85))
             .clipShape(RoundedRectangle(cornerRadius: 5))
     }
 }
