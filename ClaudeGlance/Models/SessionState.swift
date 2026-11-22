@@ -227,6 +227,17 @@ struct ClaudeHookData: Codable {
     let prompt: String?
     let status: String?
 
+    // Claude Code 2.x / Codex 0.16x fields
+    let source: String?              // SessionStart: startup/resume/clear/compact/fork
+    let reason: String?              // SessionEnd / Interrupt reason
+    let error: String?               // StopFailure / PostToolUseFailure error kind
+    let lastAssistantMessage: String?  // StopFailure last assistant text
+    let turnId: String?              // Codex turn-scoped events
+    let model: String?               // Codex payload model
+    let permissionMode: String?      // permission_mode
+    let agentType: String?           // SubagentStart/SubagentStop agent type
+    let toolUseId: String?           // tool_use_id
+
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
         case transcriptPath = "transcript_path"
@@ -240,6 +251,15 @@ struct ClaudeHookData: Codable {
         case notificationType = "notification_type"
         case prompt
         case status
+        case source
+        case reason
+        case error
+        case lastAssistantMessage = "last_assistant_message"
+        case turnId = "turn_id"
+        case model
+        case permissionMode = "permission_mode"
+        case agentType = "agent_type"
+        case toolUseId = "tool_use_id"
     }
 
     init(from decoder: Decoder) throws {
@@ -256,6 +276,15 @@ struct ClaudeHookData: Codable {
         notificationType = try container.decodeIfPresent(String.self, forKey: .notificationType)
         prompt = try container.decodeIfPresent(String.self, forKey: .prompt)
         status = try container.decodeIfPresent(String.self, forKey: .status)
+        source = try container.decodeIfPresent(String.self, forKey: .source)
+        reason = try container.decodeIfPresent(String.self, forKey: .reason)
+        error = try container.decodeIfPresent(String.self, forKey: .error)
+        lastAssistantMessage = try container.decodeIfPresent(String.self, forKey: .lastAssistantMessage)
+        turnId = try container.decodeIfPresent(String.self, forKey: .turnId)
+        model = try container.decodeIfPresent(String.self, forKey: .model)
+        permissionMode = try container.decodeIfPresent(String.self, forKey: .permissionMode)
+        agentType = try container.decodeIfPresent(String.self, forKey: .agentType)
+        toolUseId = try container.decodeIfPresent(String.self, forKey: .toolUseId)
     }
 }
 

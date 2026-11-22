@@ -1045,6 +1045,16 @@ struct ConnectionSettingsTab: View {
     @State private var isInstallingForProjects = false
     var knownCwds: [String]
 
+    // Codex 0.16x+ silently skips hooks that are not trusted in
+    // ~/.codex/config.toml (keys under [hooks.state.'...']). We can't
+    // verify the hash Codex computes, so absence of any trust entry is
+    // the only signal we can surface.
+    private var codexHooksNeedTrust: Bool {
+        let configPath = NSString(string: "~/.codex/config.toml").expandingTildeInPath
+        guard let content = try? String(contentsOfFile: configPath, encoding: .utf8) else { return true }
+        return !content.contains("hooks.state")
+    }
+
     init(ipcServer: IPCServer?, knownCwds: [String] = []) {
         self._ipcServer = ObservedObject(wrappedValue: ipcServer ?? IPCServer())
         self.knownCwds = knownCwds
@@ -1152,6 +1162,18 @@ struct ConnectionSettingsTab: View {
                             HookStatusBadge(status: codexHookStatus)
                         }
                     }
+                }
+
+                // Codex 0.16x+ runs hooks only after the user trusts them.
+                // Untrusted hooks are skipped silently, so surface the
+                // approval step here — approving via /hooks or the Codex
+                // app's Settings > Hooks writes a trusted hash into
+                // ~/.codex/config.toml.
+                if case .installed = codexHookStatus, codexHooksNeedTrust {
+                    Label("Codex needs you to trust the updated hooks once: run /hooks in Codex, or approve in Codex Settings > Hooks. Session log watching keeps working meanwhile.",
+                          systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.yellow)
                 }
             } header: {
                 Label("Agent Hook Status", systemImage: "terminal")
@@ -1432,8 +1454,29 @@ struct HookChecker {
 // MARK: - Hook Installer
 struct HookInstaller {
     static let glanceCommand = "claude-glance-reporter.sh"
-    static let claudeHookTypes = ["PreToolUse", "PostToolUse", "Notification", "Stop"]
-    static let codexHookTypes = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification", "Stop", "SubagentStop"]
+    // Claude Code 2.x hook events relevant to session status. The full
+    // event list grew a lot (Setup, PostToolBatch, TaskCreated, ...);
+    // only events that map to a HUD state are installed.
+    static let claudeHookTypes = [
+        "SessionStart", "SessionEnd",
+        "UserPromptSubmit",
+        "PreToolUse", "PostToolUse", "PostToolUseFailure",
+        "PermissionRequest", "Notification",
+        "SubagentStart", "SubagentStop",
+        "PreCompact",
+        "Stop", "StopFailure"
+    ]
+    // Codex 0.16x hook events. Codex has no Notification event; it adds
+    // Interrupt (user cancelled the turn) and PermissionRequest.
+    static let codexHookTypes = [
+        "SessionStart", "SessionEnd",
+        "UserPromptSubmit",
+        "PreToolUse", "PostToolUse",
+        "PermissionRequest",
+        "SubagentStart", "SubagentStop",
+        "PreCompact",
+        "Stop", "Interrupt"
+    ]
 
     static func hookTypes(for platform: AgentPlatform) -> [String] {
         switch platform {

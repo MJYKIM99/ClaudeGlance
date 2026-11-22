@@ -261,7 +261,21 @@ class SessionManager: ObservableObject {
         case "SessionStart":
             session.status = .thinking
             session.currentAction = "Starting session"
-            session.metadata = message.platform.displayName
+            session.metadata = message.data.model ?? message.platform.displayName
+
+        case "SessionEnd":
+            // The agent process is gone — remove the card immediately
+            // instead of waiting for a timeout.
+            sessions.removeValue(forKey: sessionKey)
+            sessionStopTimes.removeValue(forKey: sessionKey)
+            sessionStartTimes.removeValue(forKey: sessionKey)
+            updateActiveSessions()
+            return
+
+        case "SubagentStart":
+            session.status = .thinking
+            session.currentAction = "Spawning subagent"
+            session.metadata = message.data.agentType ?? ""
 
         case "UserPromptSubmit":
             session.status = .thinking
@@ -342,6 +356,28 @@ class SessionManager: ObservableObject {
                 status: .completed
             ))
 
+        case "PostToolUseFailure":
+            // Claude Code 2.x fires this instead of PostToolUse when a
+            // tool call fails. The turn usually keeps going, so mark
+            // the event failed but keep the session in a working state.
+            let tool = toolName(from: message.data)
+            let toolInput = toolInput(from: message.data)
+            session.status = .thinking
+            session.currentAction = "Tool failed: \(tool)"
+            if session.toolHistory.count >= 10 {
+                session.toolHistory.removeFirst()
+            }
+            session.toolHistory.append(ToolEvent(
+                tool: tool,
+                target: formatMetadata(tool, toolInput),
+                status: .failed
+            ))
+
+        case "PreCompact", "PostCompact":
+            session.status = .thinking
+            session.currentAction = "Compacting context"
+            session.metadata = ""
+
         case "Notification", "PermissionRequest":
             let notificationMessage = message.data.message ?? "Waiting for input"
             let notificationType = message.data.notificationType ?? ""
@@ -376,6 +412,26 @@ class SessionManager: ObservableObject {
             session.status = .completed
             session.currentAction = "Reporting update"
             session.metadata = formattedPrompt(message.data.message)
+
+        case "StopFailure":
+            // The turn ended on an API error rather than normally
+            // (Claude Code 2.x distinct event from Stop).
+            let failureMessage = message.data.lastAssistantMessage
+                ?? message.data.error
+                ?? "Turn failed"
+            session.status = .error
+            session.currentAction = failureMessage
+            session.metadata = message.data.error ?? "Error"
+            if previousStatus != .error {
+                playNotificationSound(.attention, platform: message.platform)
+            }
+
+        case "Interrupt":
+            // Codex: user cancelled the current turn.
+            session.status = .completed
+            session.currentAction = "Interrupted"
+            session.metadata = ""
+            sessionStopTimes[sessionKey] = Date()
 
         case "Stop", "SubagentStop":
             // 检查是否是因为错误而停止
