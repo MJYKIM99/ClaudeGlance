@@ -25,7 +25,7 @@ struct ClaudeGlanceApp: App {
 }
 
 // MARK: - App Delegate
-class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate, NSMenuDelegate {
     var statusItem: NSStatusItem?
     var hudWindowController: HUDWindowController?
     var browOverlayWindow: BrowOverlayWindow?
@@ -93,6 +93,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         }
 
         let menu = NSMenu()
+        menu.delegate = self
 
         // 服务状态（新增）
         let serviceStatusItem = NSMenuItem(title: "Service: Checking...", action: nil, keyEquivalent: "")
@@ -102,8 +103,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
         menu.addItem(NSMenuItem.separator())
 
-        menu.addItem(NSMenuItem(title: "Show HUD", action: #selector(showHUD), keyEquivalent: "h"))
-        menu.addItem(NSMenuItem(title: "Hide HUD", action: #selector(hideHUD), keyEquivalent: ""))
+        let showHUDItem = NSMenuItem(title: "Show HUD", action: #selector(showHUD), keyEquivalent: "h")
+        showHUDItem.tag = 110
+        menu.addItem(showHUDItem)
+        let hideHUDItem = NSMenuItem(title: "Hide HUD", action: #selector(hideHUD), keyEquivalent: "")
+        hideHUDItem.tag = 111
+        menu.addItem(hideHUDItem)
 
         let browItem = NSMenuItem(title: "Notch HUD (Experimental)", action: #selector(toggleBrowOverlay), keyEquivalent: "n")
         browItem.tag = 400
@@ -134,6 +139,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
         // 今日统计
         let statsHeaderItem = NSMenuItem(title: "Today's Stats", action: nil, keyEquivalent: "")
+        statsHeaderItem.tag = 112
         statsHeaderItem.isEnabled = false
         menu.addItem(statsHeaderItem)
 
@@ -161,6 +167,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         menu.addItem(NSMenuItem.separator())
 
         let trendHeaderItem = NSMenuItem(title: "7-Day Trend", action: nil, keyEquivalent: "")
+        trendHeaderItem.tag = 113
         trendHeaderItem.isEnabled = false
         menu.addItem(trendHeaderItem)
 
@@ -178,12 +185,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         menu.addItem(NSMenuItem.separator())
 
         // 服务操作
-        menu.addItem(NSMenuItem(title: "Restart Service", action: #selector(restartService), keyEquivalent: "r"))
+        let restartItem = NSMenuItem(title: "Restart Service", action: #selector(restartService), keyEquivalent: "r")
+        restartItem.tag = 114
+        menu.addItem(restartItem)
         menu.addItem(NSMenuItem.separator())
 
-        menu.addItem(NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ","))
+        let settingsItem = NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.tag = 115
+        menu.addItem(settingsItem)
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q"))
+        let quitItem = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q")
+        quitItem.tag = 116
+        menu.addItem(quitItem)
 
         statusItem?.menu = menu
 
@@ -259,11 +272,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         let title: String
         switch status {
         case .disconnected:
-            title = "Service: Not Running"
+            title = "\(L10n.tr("Service")): \(L10n.tr("Not Running"))"
         case .connecting:
-            title = "Service: Starting..."
+            title = "\(L10n.tr("Service")): \(L10n.tr("Starting..."))"
         case .connected:
-            title = "Service: Running"
+            title = "\(L10n.tr("Service")): \(L10n.tr("Running"))"
         case .error:
             title = "Service: Error"
         }
@@ -298,7 +311,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         let count = sessions.count
         if let menu = statusItem?.menu,
            let item = menu.item(withTag: 100) {
-            item.title = "Active Sessions: \(count)"
+            item.title = "\(L10n.tr("Active Sessions")): \(count)"
         }
 
         // error 状态时不覆盖警告图标
@@ -363,38 +376,64 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         return image
     }
 
+    // MARK: - NSMenuDelegate
+    /// 每次展开菜单时刷新本地化标题，语言切换后无需重启
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        let titles: [Int: String] = [
+            110: L10n.tr("Show HUD"),
+            111: L10n.tr("Hide HUD"),
+            112: L10n.tr("Today's Stats"),
+            113: L10n.tr("7-Day Trend"),
+            114: L10n.tr("Restart Service"),
+            115: L10n.tr("Settings..."),
+            116: L10n.tr("Quit"),
+            400: L10n.tr("Notch HUD (Experimental)"),
+            401: "  " + L10n.tr("Auto Expand on Activity"),
+            402: L10n.tr("Desktop Pet"),
+            403: L10n.tr("Pet Theme"),
+            404: L10n.tr("Pet Animation Speed"),
+        ]
+        for (tag, title) in titles {
+            menu.item(withTag: tag)?.title = title
+        }
+        updateServiceStatus(ipcServer.connectionStatus)
+        updateMenuSessionCount(sessionManager.activeSessions)
+        updateMenuStats(sessionManager.todayStats)
+        updateWeeklyTrend(sessionManager.weeklyStats)
+    }
+
     private func updateMenuStats(_ stats: TodayStats) {
         guard let menu = statusItem?.menu else { return }
 
         if let toolCallsItem = menu.item(withTag: 101) {
-            toolCallsItem.title = "  Tool Calls: \(stats.toolCalls)"
+            toolCallsItem.title = "  \(L10n.tr("Tool Calls")): \(stats.toolCalls)"
         }
 
         if let sessionsItem = menu.item(withTag: 102) {
-            sessionsItem.title = "  Sessions: \(stats.sessionsCount)"
+            sessionsItem.title = "  \(L10n.tr("Sessions")): \(stats.sessionsCount)"
         }
 
         if let topToolsItem = menu.item(withTag: 103) {
             let top3 = stats.toolBreakdown.sorted { $0.value > $1.value }.prefix(3)
             if top3.isEmpty {
-                topToolsItem.title = "  Top: —"
+                topToolsItem.title = "  \(L10n.tr("Top")): —"
             } else {
                 let parts = top3.map { "\($0.key)(\($0.value))" }
-                topToolsItem.title = "  Top: \(parts.joined(separator: " "))"
+                topToolsItem.title = "  \(L10n.tr("Top")): \(parts.joined(separator: " "))"
             }
         }
 
         if let durationItem = menu.item(withTag: 104) {
             let total = stats.totalDurationSeconds
             if total <= 0 {
-                durationItem.title = "  Active Time: —"
+                durationItem.title = "  \(L10n.tr("Active Time")): —"
             } else {
                 let hours = total / 3600
                 let minutes = (total % 3600) / 60
                 if hours > 0 {
-                    durationItem.title = "  Active Time: \(hours)h \(minutes)m"
+                    durationItem.title = "  \(L10n.tr("Active Time")): \(hours)h \(minutes)m"
                 } else {
-                    durationItem.title = "  Active Time: \(minutes)m"
+                    durationItem.title = "  \(L10n.tr("Active Time")): \(minutes)m"
                 }
             }
         }
@@ -407,7 +446,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         let values = paddedWeekValues(from: weekly)
         let spark = sparkline(from: values)
         let todayVal = values.last ?? 0
-        trendItem.title = "  \(spark)  (\(todayVal) today)"
+        trendItem.title = todayVal > 0
+            ? "  \(spark)  (\(todayVal) \(L10n.tr("today")))"
+            : "  \(spark)  (\(L10n.tr("no data")))"
     }
 
     private func paddedWeekValues(from weekly: [DayStats]) -> [Int] {

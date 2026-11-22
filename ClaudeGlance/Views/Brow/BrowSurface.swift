@@ -276,11 +276,16 @@ struct BrowSurface: View {
                                 withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
                                     sessionManager.dismissSession(sessionId: session.id)
                                 }
+                            },
+                            onFocusTerminal: {
+                                sessionManager.focusTerminal(for: session)
                             }
                         )
                     }
                 }
             }
+            // Brow 面板恒为黑底，SessionCard 的自适应颜色必须强制 dark
+            .environment(\.colorScheme, .dark)
         }
     }
 
