@@ -19,11 +19,20 @@ struct SessionCard: View {
 
     @State private var animatedStatus: SessionStatus = .idle
     @State private var isHovering = false
+    @State private var pulse = false
+
+    private var needsAttention: Bool {
+        session.status == .waiting || session.status == .error
+    }
     @AppStorage("showToolHistory") private var showToolHistory: Bool = true
 
     // 已完成/降级 idle 的会话用单行紧凑样式，少占空间
     private var isCompact: Bool {
         (session.status == .completed || session.status == .idle) && !session.isExpanded
+    }
+
+    private var statusEdgeColor: Color {
+        session.status == .error ? .red : .orange
     }
 
     private var platformColor: Color {
@@ -37,8 +46,13 @@ struct SessionCard: View {
         HStack(spacing: 0) {
             // 平台色左缘条
             Rectangle()
-                .fill(platformColor.opacity(0.85))
+                // 需要操作时左缘条用状态色并呼吸脉冲，一眼可见
+                .fill(needsAttention ? statusEdgeColor.opacity(pulse ? 1 : 0.35) : platformColor.opacity(0.85))
                 .frame(width: 3)
+                .animation(
+                    needsAttention ? .easeInOut(duration: 1).repeatForever(autoreverses: true) : .default,
+                    value: pulse
+                )
 
             VStack(spacing: 0) {
                 if isCompact {
@@ -57,10 +71,18 @@ struct SessionCard: View {
                 }
             }
         }
-        .background(Color.primary.opacity(0.06))
+        .background(Color.primary.opacity(isHovering ? 0.10 : 0.06))
+        .animation(.easeInOut(duration: 0.15), value: isHovering)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
+        .onAppear {
+            animatedStatus = session.status
+            if needsAttention { pulse = true }
+        }
+        .onChange(of: needsAttention) { _, now in
+            pulse = now
+        }
         .contextMenu {
             if let onTogglePin {
                 Button(session.pinned ? L10n.tr("Unpin from Top") : L10n.tr("Pin to Top")) { onTogglePin() }
@@ -103,9 +125,6 @@ struct SessionCard: View {
             withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
                 animatedStatus = newValue
             }
-        }
-        .onAppear {
-            animatedStatus = session.status
         }
     }
 

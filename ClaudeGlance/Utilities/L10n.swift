@@ -99,6 +99,8 @@ enum L10n {
         "Remove Label": "移除标签",
         "Session Label": "会话标签",
         "events": "条记录",
+        "Collapse all": "全部收起",
+        "Dismiss all": "清空已完成",
     ]
 
     /// Translate a HUD string. Unknown keys fall back to the source
@@ -122,5 +124,9 @@ enum L10n {
 
     static func historyCount(_ count: Int) -> String {
         AppLanguage.current == .chinese ? "\(count) 条记录" : "\(count) events"
+    }
+
+    static func activeCount(_ count: Int) -> String {
+        AppLanguage.current == .chinese ? "\(count) 个会话" : "\(count) active"
     }
 }

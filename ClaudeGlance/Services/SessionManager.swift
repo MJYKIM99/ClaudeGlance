@@ -529,6 +529,28 @@ class SessionManager: ObservableObject {
     }
 
     // MARK: - Dismiss Session (手动关闭僵尸会话)
+    /// 收起所有展开的卡片
+    func collapseAll() {
+        var changed = false
+        for (id, session) in sessions where session.isExpanded {
+            var s = session
+            s.isExpanded = false
+            sessions[id] = s
+            changed = true
+        }
+        if changed { updateActiveSessions() }
+    }
+
+    /// 清除所有已完成/降级的会话，保留需要操作的
+    func dismissAll() {
+        let removeIds = sessions.keys.filter {
+            sessions[$0]?.status == .completed || sessions[$0]?.status == .idle
+        }
+        guard !removeIds.isEmpty else { return }
+        for id in removeIds { sessions.removeValue(forKey: id) }
+        updateActiveSessions()
+    }
+
     func dismissSession(sessionId: String) {
         sessions.removeValue(forKey: sessionId)
         sessionStopTimes.removeValue(forKey: sessionId)
