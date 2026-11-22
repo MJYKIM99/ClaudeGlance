@@ -182,22 +182,29 @@ class HUDWindowController: NSWindowController {
         guard let window = window else { return }
 
         let newSize: NSSize
+        let hudWidth = max(260, CGFloat(UserDefaults.standard.double(forKey: Defaults.hudWidth) == 0
+            ? 320 : UserDefaults.standard.double(forKey: Defaults.hudWidth)))
         if sessions.isEmpty {
             newSize = NSSize(width: 48, height: 48)
         } else {
-            let cardHeight: CGFloat = 56
+            let fullCardHeight: CGFloat = 56
+            let compactCardHeight: CGFloat = 30
             let padding: CGFloat = 16
             let spacing: CGFloat = 8
+            // 高度上限：最多展示约 6 张卡 + 一行“还有 N 个”汇总，超出滚动
+            let maxHeight: CGFloat = 6 * (fullCardHeight + spacing) + padding + 22
             var height: CGFloat = padding
             for (idx, session) in sessions.enumerated() {
-                height += cardHeight
+                height += (session.status == .completed || session.status == .idle) && !session.isExpanded
+                    ? compactCardHeight : fullCardHeight
                 if session.isExpanded && !session.toolHistory.isEmpty {
                     let rows = CGFloat(min(session.toolHistory.count, 5))
                     height += 17 + rows * 20
                 }
                 if idx < sessions.count - 1 { height += spacing }
             }
-            newSize = NSSize(width: 320, height: height)
+            height = min(height, maxHeight)
+            newSize = NSSize(width: hudWidth, height: height)
         }
 
         // 动画更新窗口大小
@@ -289,29 +296,36 @@ struct HUDContentView: View {
                 CodeRainEffect(isAnimating: windowVisibility.isVisible)
                     .opacity(windowVisibility.isVisible ? 0.6 : 0)
             } else {
-                VStack(spacing: 8) {
-                    ForEach(sessionManager.activeSessions) { session in
-                        SessionCard(
-                            session: session,
-                            isAnimating: windowVisibility.isVisible,
-                            onTap: {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                    sessionManager.toggleExpand(sessionId: session.id)
+                // 高度由 updateWindowSize 封顶，超出部分滚动；
+                // 置顶的是需要操作的会话，保证它们不被滚动遮挡
+                ScrollView(.vertical, showsIndicators: sessionManager.activeSessions.count > 5) {
+                    VStack(spacing: 8) {
+                        ForEach(sessionManager.activeSessions) { session in
+                            SessionCard(
+                                session: session,
+                                isAnimating: windowVisibility.isVisible,
+                                onTap: {
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                        sessionManager.toggleExpand(sessionId: session.id)
+                                    }
+                                },
+                                onDismiss: {
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                        sessionManager.dismissSession(sessionId: session.id)
+                                    }
+                                },
+                                onFocusTerminal: {
+                                    sessionManager.focusTerminal(for: session)
                                 }
-                            },
-                            onDismiss: {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                    sessionManager.dismissSession(sessionId: session.id)
-                                }
-                            }
-                        )
-                        .transition(.asymmetric(
-                            insertion: .opacity.combined(with: .scale(scale: 0.95)),
-                            removal: .opacity.combined(with: .scale(scale: 0.95))
-                        ))
+                            )
+                            .transition(.asymmetric(
+                                insertion: .opacity.combined(with: .scale(scale: 0.95)),
+                                removal: .opacity.combined(with: .scale(scale: 0.95))
+                            ))
+                        }
                     }
+                    .padding(8)
                 }
-                .padding(8)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))

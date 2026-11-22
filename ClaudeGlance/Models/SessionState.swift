@@ -58,6 +58,7 @@ struct SessionState: Identifiable, Codable {
     // them by name.
     static let completedTimeout: TimeInterval = 5         // completed/error 状态 5 秒后移除
     static let waitingTimeout: TimeInterval = 90          // waiting 状态 90 秒后自动视为结束
+    static let idleTimeout: TimeInterval = 600            // idle(降级后的 waiting) 保留 10 分钟
     static let activeTimeout: TimeInterval = 60           // thinking/reading/writing 60s 无更新 → 视为完成
     static let longOperationThreshold: TimeInterval = 30  // 超过 30 秒视为长时间操作（"Still thinking..."）
     /// Window after a `Stop` event during which incoming `PreToolUse`
@@ -93,7 +94,20 @@ struct SessionState: Identifiable, Codable {
             // 工作状态保持 activeTimeout 秒（Claude 可能在长时间思考）
             return elapsed < Self.activeTimeout
         case .idle:
-            return elapsed < Self.completedTimeout
+            // Downgraded waiting sessions linger so the user still sees
+            // them when they come back — dismiss or SessionEnd clears.
+            return elapsed < Self.idleTimeout
+        }
+    }
+
+    /// Display priority: sessions needing a human come first.
+    var displayRank: Int {
+        switch status {
+        case .error: return 0
+        case .waiting: return 1
+        case .thinking, .reading, .writing: return 2
+        case .idle: return 3
+        case .completed: return 4
         }
     }
 

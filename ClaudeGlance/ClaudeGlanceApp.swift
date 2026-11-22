@@ -199,7 +199,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         sessionManager.$activeSessions
             .receive(on: DispatchQueue.main)
             .sink { [weak self] sessions in
-                self?.updateMenuSessionCount(sessions.count)
+                self?.updateMenuSessionCount(sessions)
             }
             .store(in: &cancellables)
 
@@ -274,9 +274,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         if let button = statusItem?.button {
             if status.isHealthy {
                 // 恢复正常图标（考虑当前会话数）
-                let count = sessionManager.activeSessions.count
-                if count > 0 {
-                    button.image = createGridIconWithBadge(count)
+                let sessions = sessionManager.activeSessions
+                if !sessions.isEmpty {
+                    button.image = createGridIconWithBadge(
+                        sessions.count,
+                        needsAttention: sessions.contains { $0.status == .waiting || $0.status == .error }
+                    )
                     button.image?.isTemplate = false
                 } else {
                     button.image = createGridIcon()
@@ -291,7 +294,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     private var lastServiceHealthy = true
 
-    private func updateMenuSessionCount(_ count: Int) {
+    private func updateMenuSessionCount(_ sessions: [SessionState]) {
+        let count = sessions.count
         if let menu = statusItem?.menu,
            let item = menu.item(withTag: 100) {
             item.title = "Active Sessions: \(count)"
@@ -301,7 +305,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         guard lastServiceHealthy, let button = statusItem?.button else { return }
 
         if count > 0 {
-            button.image = createGridIconWithBadge(count)
+            button.image = createGridIconWithBadge(
+                count,
+                needsAttention: sessions.contains { $0.status == .waiting || $0.status == .error }
+            )
             button.image?.isTemplate = false
         } else {
             button.image = createGridIcon()
@@ -309,7 +316,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         }
     }
 
-    private func createGridIconWithBadge(_ count: Int) -> NSImage {
+    private func createGridIconWithBadge(_ count: Int, needsAttention: Bool = false) -> NSImage {
         let size: CGFloat = 18
         let image = NSImage(size: NSSize(width: size, height: size))
 
@@ -337,7 +344,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         let badgeY = size - badgeSize
         let badgeRect = NSRect(x: badgeX, y: badgeY, width: badgeSize, height: badgeSize)
 
-        NSColor.systemBlue.setFill()
+        // 有等待/错误会话时角标用橙色提示“需要你”
+        (needsAttention ? NSColor.systemOrange : NSColor.systemBlue).setFill()
         NSBezierPath(ovalIn: badgeRect).fill()
 
         let text = count > 9 ? "9+" : "\(count)"
@@ -987,7 +995,9 @@ struct AppearanceSettingsTab: View {
     @AppStorage(Defaults.autoHideIdle) private var autoHideIdle: Bool = true
     @AppStorage(Defaults.idleTimeout) private var idleTimeout: Double = 60
     @AppStorage(Defaults.hudOpacity) private var hudOpacity: Double = 1.0
+    @AppStorage(Defaults.hudWidth) private var hudWidth: Double = 320
     @AppStorage(Defaults.showToolHistory) private var showToolHistory: Bool = true
+    @AppStorage(Defaults.appLanguage) private var appLanguage: String = "system"
 
     var body: some View {
         Form {
@@ -1024,9 +1034,31 @@ struct AppearanceSettingsTab: View {
                         .frame(width: 40, alignment: .trailing)
                 }
 
+                HStack {
+                    Text("HUD width")
+                    Spacer()
+                    Slider(value: $hudWidth, in: 260...520, step: 20) {
+                        Text("Width")
+                    }
+                    .frame(width: 150)
+                    Text("\(Int(hudWidth))pt")
+                        .foregroundStyle(.secondary)
+                        .frame(width: 40, alignment: .trailing)
+                }
+
                 Toggle("Show tool history in expanded view", isOn: $showToolHistory)
             } header: {
                 Label("Display", systemImage: "eye")
+            }
+
+            Section {
+                Picker("Language / 语言", selection: $appLanguage) {
+                    Text("System / 跟随系统").tag("system")
+                    Text("English").tag("en")
+                    Text("中文").tag("zh")
+                }
+            } header: {
+                Label("Language", systemImage: "globe")
             }
         }
         .formStyle(.grouped)

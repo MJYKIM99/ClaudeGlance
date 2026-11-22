@@ -38,9 +38,13 @@ enum Defaults {
     static let hudPositionY          = "hudPositionY"
     static let hudScreenHash         = "hudScreenHash"
     static let hudOpacity            = "hudOpacity"
+    static let hudWidth              = "hudWidth"
     static let autoHideIdle          = "autoHideIdle"
     static let idleTimeout           = "idleTimeout"
     static let showToolHistory       = "showToolHistory"
+
+    // MARK: - Language
+    static let appLanguage           = "appLanguage"
 
     // MARK: - Codex integration
     static let codexSessionWatcherEnabled = "codexSessionWatcherEnabled"
