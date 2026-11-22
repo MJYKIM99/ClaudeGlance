@@ -287,10 +287,11 @@ struct HUDContentView: View {
 
     var body: some View {
         ZStack {
-            VisualEffectBlur(material: .hudWindow, blendingMode: .behindWindow)
+            // 随系统外观的毛玻璃（浅色模式浅、深色模式深），不再是固定黑色
+            VisualEffectBlur(material: .popover, blendingMode: .behindWindow)
 
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
 
             if sessionManager.activeSessions.isEmpty {
                 CodeRainEffect(isAnimating: windowVisibility.isVisible)

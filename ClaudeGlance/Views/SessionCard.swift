@@ -54,14 +54,7 @@ struct SessionCard: View {
                 }
             }
         }
-        .background(
-            ZStack {
-                // 深色底层，确保在浅色背景下也有足够对比度
-                Color.black.opacity(0.4)
-                // 轻微的白色叠加
-                Color.white.opacity(0.03)
-            }
-        )
+        .background(Color.primary.opacity(0.06))
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
@@ -121,7 +114,7 @@ struct SessionCard: View {
                             .foregroundColor(.orange.opacity(0.9))
                     } else {
                         Text(session.currentAction)
-                            .foregroundColor(.white)
+                            .foregroundColor(.primary)
                     }
                 }
                 .font(.system(size: 13, weight: .medium))
@@ -135,8 +128,8 @@ struct SessionCard: View {
                 HStack(spacing: 4) {
                     Text(session.project)
                         .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.6))
-                        .underline(color: .white.opacity(0.2))
+                        .foregroundColor(.secondary)
+                        .underline(color: .secondary.opacity(0.3))
                         .onTapGesture {
                             NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: session.cwd)
                         }
@@ -144,10 +137,10 @@ struct SessionCard: View {
 
                     if !session.metadata.isEmpty && !session.isStillWaiting {
                         Text("·")
-                            .foregroundColor(.white.opacity(0.4))
+                            .foregroundStyle(.tertiary)
                         Text(session.metadata)
                             .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.6))
+                            .foregroundColor(.secondary)
                             .lineLimit(1)
                             .help(session.metadata)
                     }
@@ -155,7 +148,7 @@ struct SessionCard: View {
                     // 长时间思考时显示已用时间
                     if session.isStillThinking {
                         Text("·")
-                            .foregroundColor(.white.opacity(0.4))
+                            .foregroundStyle(.tertiary)
                         Text(formatElapsedTime(session.lastUpdate))
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundColor(.yellow.opacity(0.7))
@@ -164,7 +157,7 @@ struct SessionCard: View {
                     // 长时间等待时显示剩余时间
                     if session.isStillWaiting, let remaining = session.waitingSecondsRemaining {
                         Text("·")
-                            .foregroundColor(.white.opacity(0.4))
+                            .foregroundStyle(.tertiary)
                         Text(L10n.autoHideIn(remaining))
                             .font(.system(size: 11, design: .monospaced))
                             .foregroundColor(.orange.opacity(0.7))
@@ -178,7 +171,7 @@ struct SessionCard: View {
             if showToolHistory && !session.toolHistory.isEmpty {
                 Image(systemName: session.isExpanded ? "chevron.up" : "chevron.down")
                     .font(.system(size: 10, weight: .medium))
-                    .foregroundColor(.white.opacity(0.4))
+                    .foregroundStyle(.tertiary)
             }
 
             // 终端标识（点击聚焦终端）
@@ -195,7 +188,7 @@ struct SessionCard: View {
                 }) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 16))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
                 .help(L10n.tr("Dismiss this session"))
@@ -214,17 +207,17 @@ struct SessionCard: View {
         HStack(spacing: 8) {
             Image(systemName: session.status == .completed ? "checkmark.circle.fill" : "pause.circle")
                 .font(.system(size: 12))
-                .foregroundColor(session.status == .completed ? .green.opacity(0.8) : .white.opacity(0.4))
+                .foregroundColor(session.status == .completed ? .green.opacity(0.8) : Color.secondary.opacity(0.7))
 
             Text(session.currentAction)
                 .font(.system(size: 12))
-                .foregroundColor(.white.opacity(0.6))
+                .foregroundColor(.secondary)
                 .lineLimit(1)
                 .help(session.currentAction)
 
             Text(session.project)
                 .font(.system(size: 10))
-                .foregroundColor(.white.opacity(0.35))
+                .foregroundStyle(.tertiary)
                 .lineLimit(1)
 
             Spacer()
@@ -233,7 +226,7 @@ struct SessionCard: View {
                 Button(action: { onDismiss?() }) {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 12))
-                        .foregroundColor(.white.opacity(0.35))
+                        .foregroundStyle(.tertiary)
                 }
                 .buttonStyle(.plain)
                 .help(L10n.tr("Dismiss this session"))
@@ -264,7 +257,7 @@ struct ToolHistoryPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Divider()
-                .background(Color.white.opacity(0.1))
+                .background(Color.primary.opacity(0.08))
 
             ForEach(history.suffix(5).reversed()) { event in
                 HStack(spacing: 8) {
@@ -277,13 +270,13 @@ struct ToolHistoryPanel: View {
                     // 工具名称
                     Text(event.tool)
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(.secondary)
 
                     // 目标
                     if !event.target.isEmpty {
                         Text(event.target)
                             .font(.system(size: 10, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.4))
+                            .foregroundStyle(.tertiary)
                             .lineLimit(1)
                             .help(event.target)
                     }
@@ -300,13 +293,13 @@ struct ToolHistoryPanel: View {
                     // 时间戳
                     Text(formatTime(event.timestamp))
                         .font(.system(size: 9, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundStyle(.tertiary)
                 }
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(Color.black.opacity(0.2))
+        .background(Color.primary.opacity(0.04))
     }
 
     private func iconForTool(_ tool: String) -> String {
