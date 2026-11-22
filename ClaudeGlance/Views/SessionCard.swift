@@ -104,14 +104,16 @@ struct SessionCard: View {
                 .frame(width: 32, height: 32)
 
             VStack(alignment: .leading, spacing: 2) {
-                // 主标题：当前动作
-                Group {
+                // 主标题：状态用彩色圆点表达，文字统一正文色（半透明背景上彩色文字看不清）
+                HStack(spacing: 6) {
                     if session.isStillThinking {
+                        Circle().fill(.yellow).frame(width: 7, height: 7)
                         Text(L10n.tr("Still thinking..."))
-                            .foregroundColor(.yellow.opacity(0.9))
+                            .foregroundColor(.primary)
                     } else if session.isStillWaiting {
+                        Circle().fill(.orange).frame(width: 7, height: 7)
                         Text(L10n.tr("Waiting for response..."))
-                            .foregroundColor(.orange.opacity(0.9))
+                            .foregroundColor(.primary)
                     } else {
                         Text(session.currentAction)
                             .foregroundColor(.primary)
@@ -151,7 +153,7 @@ struct SessionCard: View {
                             .foregroundStyle(.tertiary)
                         Text(formatElapsedTime(session.lastUpdate))
                             .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(.yellow.opacity(0.7))
+                            .foregroundStyle(.tertiary)
                     }
 
                     // 长时间等待时显示剩余时间
@@ -160,7 +162,7 @@ struct SessionCard: View {
                             .foregroundStyle(.tertiary)
                         Text(L10n.autoHideIn(remaining))
                             .font(.system(size: 11, design: .monospaced))
-                            .foregroundColor(.orange.opacity(0.7))
+                            .foregroundStyle(.tertiary)
                     }
                 }
             }
