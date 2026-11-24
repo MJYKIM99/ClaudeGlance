@@ -182,22 +182,31 @@ class HUDWindowController: NSWindowController {
         guard let window = window else { return }
 
         let newSize: NSSize
+        let hudWidth = max(260, CGFloat(UserDefaults.standard.double(forKey: Defaults.hudWidth) == 0
+            ? 320 : UserDefaults.standard.double(forKey: Defaults.hudWidth)))
         if sessions.isEmpty {
             newSize = NSSize(width: 48, height: 48)
         } else {
-            let cardHeight: CGFloat = 56
+            let fullCardHeight: CGFloat = 56
+            let compactCardHeight: CGFloat = 30
             let padding: CGFloat = 16
             let spacing: CGFloat = 8
-            var height: CGFloat = padding
+            let headerHeight: CGFloat = 30
+            // 高度上限：头部 + 最多展示约 6 张卡，超出滚动
+            let maxHeight: CGFloat = headerHeight + 6 * (fullCardHeight + spacing) + padding
+            var height: CGFloat = padding + headerHeight
             for (idx, session) in sessions.enumerated() {
-                height += cardHeight
+                height += (session.status == .completed || session.status == .idle) && !session.isExpanded
+                    ? compactCardHeight : fullCardHeight
                 if session.isExpanded && !session.toolHistory.isEmpty {
-                    let rows = CGFloat(min(session.toolHistory.count, 5))
-                    height += 17 + rows * 20
+                    // 完整时间线面板：最多 ~8 行内部滚动 + 分隔线/计数行
+                    let rows = CGFloat(min(session.toolHistory.count, 8))
+                    height += 26 + rows * 20 + (session.toolHistory.count > 8 ? 14 : 0)
                 }
                 if idx < sessions.count - 1 { height += spacing }
             }
-            newSize = NSSize(width: 320, height: height)
+            height = min(height, maxHeight)
+            newSize = NSSize(width: hudWidth, height: height)
         }
 
         // 动画更新窗口大小
@@ -280,43 +289,102 @@ struct HUDContentView: View {
 
     var body: some View {
         ZStack {
-            VisualEffectBlur(material: .hudWindow, blendingMode: .behindWindow)
+            // 随系统外观的毛玻璃（浅色模式浅、深色模式深），不再是固定黑色
+            VisualEffectBlur(material: .popover, blendingMode: .behindWindow)
 
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .stroke(Color.white.opacity(0.1), lineWidth: 0.5)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
 
             if sessionManager.activeSessions.isEmpty {
                 CodeRainEffect(isAnimating: windowVisibility.isVisible)
                     .opacity(windowVisibility.isVisible ? 0.6 : 0)
             } else {
-                VStack(spacing: 8) {
-                    ForEach(sessionManager.activeSessions) { session in
-                        SessionCard(
-                            session: session,
-                            isAnimating: windowVisibility.isVisible,
-                            onTap: {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                    sessionManager.toggleExpand(sessionId: session.id)
+                VStack(spacing: 0) {
+                    headerBar
+                    // 高度由 updateWindowSize 封顶，超出部分滚动；
+                    // 置顶的是需要操作的会话，保证它们不被滚动遮挡
+                    ScrollView(.vertical, showsIndicators: sessionManager.activeSessions.count > 5) {
+                        VStack(spacing: 8) {
+                        ForEach(sessionManager.activeSessions) { session in
+                            SessionCard(
+                                session: session,
+                                isAnimating: windowVisibility.isVisible,
+                                onTap: {
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                        sessionManager.toggleExpand(sessionId: session.id)
+                                    }
+                                },
+                                onDismiss: {
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                                        sessionManager.dismissSession(sessionId: session.id)
+                                    }
+                                },
+                                onFocusTerminal: {
+                                    sessionManager.focusTerminal(for: session)
+                                },
+                                onSetLabel: {
+                                    SessionCardLabelPrompt.ask(session: session) { label in
+                                        sessionManager.setLabel(label, for: session.id)
+                                    }
+                                },
+                                onRemoveLabel: {
+                                    sessionManager.setLabel(nil, for: session.id)
+                                },
+                                onTogglePin: {
+                                    sessionManager.togglePin(sessionId: session.id)
                                 }
-                            },
-                            onDismiss: {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                                    sessionManager.dismissSession(sessionId: session.id)
-                                }
-                            }
-                        )
-                        .transition(.asymmetric(
-                            insertion: .opacity.combined(with: .scale(scale: 0.95)),
-                            removal: .opacity.combined(with: .scale(scale: 0.95))
-                        ))
+                            )
+                            .transition(.asymmetric(
+                                insertion: .opacity.combined(with: .scale(scale: 0.95)),
+                                removal: .opacity.combined(with: .scale(scale: 0.95))
+                            ))
+                        }
+                    }
+                        .padding(8)
+                        .padding(.top, 0)
                     }
                 }
-                .padding(8)
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         .opacity(hudOpacity)
         .animation(.spring(response: 0.4, dampingFraction: 0.8), value: sessionManager.activeSessions.count)
+    }
+
+    // 顶部小头部：会话数 + 全部收起 + 清空已完成
+    private var headerBar: some View {
+        HStack(spacing: 6) {
+            Text(L10n.activeCount(sessionManager.activeSessions.count))
+                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    sessionManager.collapseAll()
+                }
+            } label: {
+                Image(systemName: "arrow.up.right.and.arrow.down.left")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help(L10n.tr("Collapse all"))
+
+            Button {
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                    sessionManager.dismissAll()
+                }
+            } label: {
+                Image(systemName: "xmark.circle")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .help(L10n.tr("Dismiss all"))
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(Color.primary.opacity(0.03))
     }
 }
 

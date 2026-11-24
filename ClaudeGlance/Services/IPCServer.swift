@@ -260,6 +260,9 @@ class IPCServer: ObservableObject {
     private func startHTTPListener(on port: UInt16) throws {
         let params = NWParameters.tcp
         params.allowLocalEndpointReuse = true
+        // Hook reporters only ever connect from this machine — don't
+        // accept state POSTs from other hosts on the LAN.
+        params.requiredInterfaceType = .loopback
 
         let listener = try NWListener(using: params, on: NWEndpoint.Port(rawValue: port)!)
 

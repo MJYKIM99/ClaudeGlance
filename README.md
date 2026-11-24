@@ -51,7 +51,19 @@ A native macOS application that provides a real-time floating HUD (Heads-Up Disp
 - **Menu Bar Session Badge** - Active session count displayed on the menu bar icon
 - **7-Day Statistics** - Rolling weekly stats with sparkline trend in menu bar dropdown
 - **Tool Breakdown & Duration** - Per-tool call counts (Top 3) and cumulative active time in menu bar
-- **macOS Notification Center** - System notification banners when Claude needs input or completes a task
+- **macOS Notification Center** - System notification banners when Claude needs input or completes a task; clicking focuses that session's terminal
+- **Notification Click-to-Focus** - Banners carry the project name and current action; one click brings the right terminal forward
+- **Priority Ordering** - Sessions that need you (waiting / error) always float to the top of the HUD
+- **Pin Sessions** - Right-click a card to pin it to the top regardless of priority
+- **Session Labels** - Right-click a card to attach a custom label chip ("frontend debug", "pre-release")
+- **Full Tool Timeline** - Expand a card to scroll through the whole tool-call history (up to 50 entries)
+- **Attention Pulse** - The left edge of a waiting/error card breathes in its status color
+- **HUD Header Bar** - Session count plus collapse-all and dismiss-all buttons
+- **Adaptive HUD Material** - Native frosted popover material follows system light/dark mode
+- **HUD Width Control** - Adjustable card width in Settings (260-520pt)
+- **Compact Done Cards** - Completed and idle sessions collapse to a single row
+- **Priority-Aware Cleanup** - Waiting sessions degrade to idle instead of disappearing
+- **中文 / English UI** - Switchable English or Chinese interface language
 - **Session Context Menu** - Right-click cards to copy session ID, project path, open in Finder, or view transcript
 - **Notch HUD Overlay** *(experimental)* - Optional brow silhouette that hugs the MacBook camera ledge for an at-a-glance status indicator
 - **Code Rain Effect** - Matrix-style particle animation on idle HUD
@@ -60,7 +72,7 @@ A native macOS application that provides a real-time floating HUD (Heads-Up Disp
 - **Auto-Hide with Manual Override** - HUD auto-hides when idle; manual hide won't be overridden by new sessions
 - **Launch at Login** - Proper macOS login item integration via SMAppService
 - **High Contrast Display** - Optimized for both light and dark desktop backgrounds
-- **Fluid Window** - Automatically scales based on active session count
+- **Fluid Window** - Automatically scales with sessions, capping at ~6 cards with scroll
 - **Always On Top** - Floating window stays visible above all other windows
 
 ## Status Indicators
@@ -147,51 +159,26 @@ the menu bar icon because other apps have too many menu items.
 
 ## Manual Hook Configuration
 
-If automatic installation fails for Claude Code, manually configure `~/.claude/settings.json`:
+ClaudeGlance installs the full lifecycle hook set for each agent. If automatic
+installation fails, configure the hooks manually — every event uses the same
+`matcher: "*"` + `type: "command"` wrapper shown below.
+
+**Claude Code** (`~/.claude/settings.json`, 13 events):
+
+`SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
+`PostToolUseFailure`, `PermissionRequest`, `Notification`, `SubagentStart`,
+`SubagentStop`, `PreCompact`, `Stop`, `StopFailure`
 
 ```json
 {
   "hooks": {
-    "PreToolUse": [
+    "<EVENT>": [
       {
         "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "~/.claude/hooks/claude-glance-reporter.sh PreToolUse"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/claude-glance-reporter.sh PostToolUse"
-          }
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/claude-glance-reporter.sh Notification"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.claude/hooks/claude-glance-reporter.sh Stop"
+            "command": "~/.claude/hooks/claude-glance-reporter.sh <EVENT>"
           }
         ]
       }
@@ -200,62 +187,23 @@ If automatic installation fails for Claude Code, manually configure `~/.claude/s
 }
 ```
 
-For Codex, ClaudeGlance writes equivalent lifecycle hooks to `~/.codex/hooks.json` using the same reporter with `--platform codex`:
+**Codex** (`~/.codex/hooks.json`, 11 events) — same shape with `--platform codex`.
+Codex has no `Notification` event; it adds `Interrupt` (user cancelled the turn):
+
+`SessionStart`, `SessionEnd`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`,
+`PermissionRequest`, `SubagentStart`, `SubagentStop`, `PreCompact`, `Stop`,
+`Interrupt`
 
 ```json
 {
   "hooks": {
-    "SessionStart": [
+    "<EVENT>": [
       {
         "matcher": "*",
         "hooks": [
           {
             "type": "command",
-            "command": "~/.codex/hooks/claude-glance-reporter.sh --platform codex SessionStart"
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.codex/hooks/claude-glance-reporter.sh --platform codex PreToolUse"
-          }
-        ]
-      }
-    ],
-    "PostToolUse": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.codex/hooks/claude-glance-reporter.sh --platform codex PostToolUse"
-          }
-        ]
-      }
-    ],
-    "Notification": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.codex/hooks/claude-glance-reporter.sh --platform codex Notification"
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "~/.codex/hooks/claude-glance-reporter.sh --platform codex Stop"
+            "command": "~/.codex/hooks/claude-glance-reporter.sh --platform codex <EVENT>"
           }
         ]
       }
@@ -263,6 +211,9 @@ For Codex, ClaudeGlance writes equivalent lifecycle hooks to `~/.codex/hooks.jso
   }
 }
 ```
+
+> Codex 0.16x+ requires approving hooks once via `/hooks` or Settings before
+> they fire.
 
 ## Architecture
 
@@ -310,7 +261,7 @@ The HUD receives JSON messages via Unix Socket (`/tmp/claude-glance.sock`) or HT
 
 ## Requirements
 
-- macOS 15.0+
+- macOS 15.7+
 - Xcode 15.0+ (for building from source)
 - Claude Code CLI or Codex CLI (tested with hooks API / local session logs)
 
@@ -405,7 +356,18 @@ Created by **Kim**
 - **菜单栏会话徽标** - 菜单栏图标上显示活跃会话数
 - **7 天统计趋势** - 菜单栏下拉中显示 sparkline 周趋势
 - **工具分布与时长** - 菜单栏显示 Top 3 工具调用分布和累计活跃时长
-- **macOS 通知中心** - Claude 需要输入或完成任务时推送系统通知
+- **macOS 通知中心** - Claude 需要输入或完成任务时推送系统通知；点击通知跳回对应终端
+- **优先级排序** - 需要操作的会话（等待/错误）始终排在 HUD 顶部
+- **会话置顶** - 右键卡片可将重要会话固定在顶部
+- **会话标签** - 右键卡片可添加自定义标签（如"前端调试"、"发布前"）
+- **完整工具时间线** - 展开卡片可滚动查看全部工具调用历史（最多 50 条）
+- **注意脉冲** - 等待/错误卡片左缘色条呼吸脉冲提醒
+- **HUD 头部栏** - 会话计数 + 全部收起/清空已完成按钮
+- **自适应毛玻璃** - 原生 popover 材质随系统浅色/深色模式切换
+- **HUD 宽度调节** - 设置中可调卡片宽度（260-520pt）
+- **紧凑完成态** - 已完成/空闲会话折叠为单行
+- **等待降级** - 等待会话超时后降级保留而非消失
+- **中文 / English UI** - 可在英文与中文界面间切换
 - **会话右键菜单** - 右键卡片可复制会话 ID、项目路径、打开 Finder 或查看对话记录
 - **刘海 HUD 叠层** *(实验性)* - 可选的 brow 轮廓贴合 MacBook 摄像头凹槽，实现一眼可见的状态指示
 - **代码雨特效** - 空闲时 HUD 显示 Matrix 风格粒子动画
@@ -414,7 +376,7 @@ Created by **Kim**
 - **智能自动隐藏** - 空闲时自动隐藏 HUD；手动隐藏不会被新会话覆盖
 - **开机自启** - 通过 SMAppService 实现 macOS 原生登录项
 - **高对比度显示** - 优化背景对比度，支持浅色和深色桌面
-- **流体窗口** - 根据活动会话数量自动伸缩
+- **流体窗口** - 随会话数自动伸缩，约 6 张卡片封顶并支持滚动
 - **始终置顶** - 悬浮窗口不会被其他窗口遮挡
 
 ## 状态指示
@@ -484,7 +446,7 @@ xcodebuild -scheme ClaudeGlance -configuration Release
 
 ## 系统要求
 
-- macOS 15.0+
+- macOS 15.7+
 - Xcode 15.0+（从源码构建时需要）
 - Claude Code CLI 或 Codex CLI
 

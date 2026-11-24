@@ -25,7 +25,7 @@ struct ClaudeGlanceApp: App {
 }
 
 // MARK: - App Delegate
-class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate, NSMenuDelegate {
     var statusItem: NSStatusItem?
     var hudWindowController: HUDWindowController?
     var browOverlayWindow: BrowOverlayWindow?
@@ -83,6 +83,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         completionHandler([.banner, .sound])
     }
 
+    /// 点击通知横幅：展示 HUD 并聚焦对应会话的终端
+    func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                didReceive response: UNNotificationResponse,
+                                withCompletionHandler completionHandler: @escaping () -> Void) {
+        if let sessionKey = response.notification.request.content.userInfo["sessionKey"] as? String {
+            hudWindowController?.showWindow(nil)
+            hudWindowController?.manuallyHidden = false
+            sessionManager.focusTerminal(sessionId: sessionKey)
+        }
+        completionHandler()
+    }
+
     // MARK: - Menu Bar
     private func setupMenuBar() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -93,6 +105,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         }
 
         let menu = NSMenu()
+        menu.delegate = self
 
         // 服务状态（新增）
         let serviceStatusItem = NSMenuItem(title: "Service: Checking...", action: nil, keyEquivalent: "")
@@ -102,8 +115,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
         menu.addItem(NSMenuItem.separator())
 
-        menu.addItem(NSMenuItem(title: "Show HUD", action: #selector(showHUD), keyEquivalent: "h"))
-        menu.addItem(NSMenuItem(title: "Hide HUD", action: #selector(hideHUD), keyEquivalent: ""))
+        let showHUDItem = NSMenuItem(title: "Show HUD", action: #selector(showHUD), keyEquivalent: "h")
+        showHUDItem.tag = 110
+        menu.addItem(showHUDItem)
+        let hideHUDItem = NSMenuItem(title: "Hide HUD", action: #selector(hideHUD), keyEquivalent: "")
+        hideHUDItem.tag = 111
+        menu.addItem(hideHUDItem)
 
         let browItem = NSMenuItem(title: "Notch HUD (Experimental)", action: #selector(toggleBrowOverlay), keyEquivalent: "n")
         browItem.tag = 400
@@ -134,6 +151,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
         // 今日统计
         let statsHeaderItem = NSMenuItem(title: "Today's Stats", action: nil, keyEquivalent: "")
+        statsHeaderItem.tag = 112
         statsHeaderItem.isEnabled = false
         menu.addItem(statsHeaderItem)
 
@@ -161,6 +179,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         menu.addItem(NSMenuItem.separator())
 
         let trendHeaderItem = NSMenuItem(title: "7-Day Trend", action: nil, keyEquivalent: "")
+        trendHeaderItem.tag = 113
         trendHeaderItem.isEnabled = false
         menu.addItem(trendHeaderItem)
 
@@ -178,12 +197,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         menu.addItem(NSMenuItem.separator())
 
         // 服务操作
-        menu.addItem(NSMenuItem(title: "Restart Service", action: #selector(restartService), keyEquivalent: "r"))
+        let restartItem = NSMenuItem(title: "Restart Service", action: #selector(restartService), keyEquivalent: "r")
+        restartItem.tag = 114
+        menu.addItem(restartItem)
         menu.addItem(NSMenuItem.separator())
 
-        menu.addItem(NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ","))
+        let settingsItem = NSMenuItem(title: "Settings...", action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.tag = 115
+        menu.addItem(settingsItem)
         menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q"))
+        let quitItem = NSMenuItem(title: "Quit", action: #selector(quitApp), keyEquivalent: "q")
+        quitItem.tag = 116
+        menu.addItem(quitItem)
 
         statusItem?.menu = menu
 
@@ -199,7 +224,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         sessionManager.$activeSessions
             .receive(on: DispatchQueue.main)
             .sink { [weak self] sessions in
-                self?.updateMenuSessionCount(sessions.count)
+                self?.updateMenuSessionCount(sessions)
             }
             .store(in: &cancellables)
 
@@ -259,11 +284,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         let title: String
         switch status {
         case .disconnected:
-            title = "Service: Not Running"
+            title = "\(L10n.tr("Service")): \(L10n.tr("Not Running"))"
         case .connecting:
-            title = "Service: Starting..."
+            title = "\(L10n.tr("Service")): \(L10n.tr("Starting..."))"
         case .connected:
-            title = "Service: Running"
+            title = "\(L10n.tr("Service")): \(L10n.tr("Running"))"
         case .error:
             title = "Service: Error"
         }
@@ -274,9 +299,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         if let button = statusItem?.button {
             if status.isHealthy {
                 // 恢复正常图标（考虑当前会话数）
-                let count = sessionManager.activeSessions.count
-                if count > 0 {
-                    button.image = createGridIconWithBadge(count)
+                let sessions = sessionManager.activeSessions
+                if !sessions.isEmpty {
+                    button.image = createGridIconWithBadge(
+                        sessions.count,
+                        needsAttention: sessions.contains { $0.status == .waiting || $0.status == .error }
+                    )
                     button.image?.isTemplate = false
                 } else {
                     button.image = createGridIcon()
@@ -291,17 +319,21 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     private var lastServiceHealthy = true
 
-    private func updateMenuSessionCount(_ count: Int) {
+    private func updateMenuSessionCount(_ sessions: [SessionState]) {
+        let count = sessions.count
         if let menu = statusItem?.menu,
            let item = menu.item(withTag: 100) {
-            item.title = "Active Sessions: \(count)"
+            item.title = "\(L10n.tr("Active Sessions")): \(count)"
         }
 
         // error 状态时不覆盖警告图标
         guard lastServiceHealthy, let button = statusItem?.button else { return }
 
         if count > 0 {
-            button.image = createGridIconWithBadge(count)
+            button.image = createGridIconWithBadge(
+                count,
+                needsAttention: sessions.contains { $0.status == .waiting || $0.status == .error }
+            )
             button.image?.isTemplate = false
         } else {
             button.image = createGridIcon()
@@ -309,7 +341,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         }
     }
 
-    private func createGridIconWithBadge(_ count: Int) -> NSImage {
+    private func createGridIconWithBadge(_ count: Int, needsAttention: Bool = false) -> NSImage {
         let size: CGFloat = 18
         let image = NSImage(size: NSSize(width: size, height: size))
 
@@ -337,7 +369,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         let badgeY = size - badgeSize
         let badgeRect = NSRect(x: badgeX, y: badgeY, width: badgeSize, height: badgeSize)
 
-        NSColor.systemBlue.setFill()
+        // 有等待/错误会话时角标用橙色提示“需要你”
+        (needsAttention ? NSColor.systemOrange : NSColor.systemBlue).setFill()
         NSBezierPath(ovalIn: badgeRect).fill()
 
         let text = count > 9 ? "9+" : "\(count)"
@@ -355,38 +388,64 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         return image
     }
 
+    // MARK: - NSMenuDelegate
+    /// 每次展开菜单时刷新本地化标题，语言切换后无需重启
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        let titles: [Int: String] = [
+            110: L10n.tr("Show HUD"),
+            111: L10n.tr("Hide HUD"),
+            112: L10n.tr("Today's Stats"),
+            113: L10n.tr("7-Day Trend"),
+            114: L10n.tr("Restart Service"),
+            115: L10n.tr("Settings..."),
+            116: L10n.tr("Quit"),
+            400: L10n.tr("Notch HUD (Experimental)"),
+            401: "  " + L10n.tr("Auto Expand on Activity"),
+            402: L10n.tr("Desktop Pet"),
+            403: L10n.tr("Pet Theme"),
+            404: L10n.tr("Pet Animation Speed"),
+        ]
+        for (tag, title) in titles {
+            menu.item(withTag: tag)?.title = title
+        }
+        updateServiceStatus(ipcServer.connectionStatus)
+        updateMenuSessionCount(sessionManager.activeSessions)
+        updateMenuStats(sessionManager.todayStats)
+        updateWeeklyTrend(sessionManager.weeklyStats)
+    }
+
     private func updateMenuStats(_ stats: TodayStats) {
         guard let menu = statusItem?.menu else { return }
 
         if let toolCallsItem = menu.item(withTag: 101) {
-            toolCallsItem.title = "  Tool Calls: \(stats.toolCalls)"
+            toolCallsItem.title = "  \(L10n.tr("Tool Calls")): \(stats.toolCalls)"
         }
 
         if let sessionsItem = menu.item(withTag: 102) {
-            sessionsItem.title = "  Sessions: \(stats.sessionsCount)"
+            sessionsItem.title = "  \(L10n.tr("Sessions")): \(stats.sessionsCount)"
         }
 
         if let topToolsItem = menu.item(withTag: 103) {
             let top3 = stats.toolBreakdown.sorted { $0.value > $1.value }.prefix(3)
             if top3.isEmpty {
-                topToolsItem.title = "  Top: —"
+                topToolsItem.title = "  \(L10n.tr("Top")): —"
             } else {
                 let parts = top3.map { "\($0.key)(\($0.value))" }
-                topToolsItem.title = "  Top: \(parts.joined(separator: " "))"
+                topToolsItem.title = "  \(L10n.tr("Top")): \(parts.joined(separator: " "))"
             }
         }
 
         if let durationItem = menu.item(withTag: 104) {
             let total = stats.totalDurationSeconds
             if total <= 0 {
-                durationItem.title = "  Active Time: —"
+                durationItem.title = "  \(L10n.tr("Active Time")): —"
             } else {
                 let hours = total / 3600
                 let minutes = (total % 3600) / 60
                 if hours > 0 {
-                    durationItem.title = "  Active Time: \(hours)h \(minutes)m"
+                    durationItem.title = "  \(L10n.tr("Active Time")): \(hours)h \(minutes)m"
                 } else {
-                    durationItem.title = "  Active Time: \(minutes)m"
+                    durationItem.title = "  \(L10n.tr("Active Time")): \(minutes)m"
                 }
             }
         }
@@ -399,7 +458,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         let values = paddedWeekValues(from: weekly)
         let spark = sparkline(from: values)
         let todayVal = values.last ?? 0
-        trendItem.title = "  \(spark)  (\(todayVal) today)"
+        trendItem.title = todayVal > 0
+            ? "  \(spark)  (\(todayVal) \(L10n.tr("today")))"
+            : "  \(spark)  (\(L10n.tr("no data")))"
     }
 
     private func paddedWeekValues(from weekly: [DayStats]) -> [Int] {
@@ -987,7 +1048,9 @@ struct AppearanceSettingsTab: View {
     @AppStorage(Defaults.autoHideIdle) private var autoHideIdle: Bool = true
     @AppStorage(Defaults.idleTimeout) private var idleTimeout: Double = 60
     @AppStorage(Defaults.hudOpacity) private var hudOpacity: Double = 1.0
+    @AppStorage(Defaults.hudWidth) private var hudWidth: Double = 320
     @AppStorage(Defaults.showToolHistory) private var showToolHistory: Bool = true
+    @AppStorage(Defaults.appLanguage) private var appLanguage: String = "system"
 
     var body: some View {
         Form {
@@ -1024,9 +1087,31 @@ struct AppearanceSettingsTab: View {
                         .frame(width: 40, alignment: .trailing)
                 }
 
+                HStack {
+                    Text("HUD width")
+                    Spacer()
+                    Slider(value: $hudWidth, in: 260...520, step: 20) {
+                        Text("Width")
+                    }
+                    .frame(width: 150)
+                    Text("\(Int(hudWidth))pt")
+                        .foregroundStyle(.secondary)
+                        .frame(width: 40, alignment: .trailing)
+                }
+
                 Toggle("Show tool history in expanded view", isOn: $showToolHistory)
             } header: {
                 Label("Display", systemImage: "eye")
+            }
+
+            Section {
+                Picker("Language / 语言", selection: $appLanguage) {
+                    Text("System / 跟随系统").tag("system")
+                    Text("English").tag("en")
+                    Text("中文").tag("zh")
+                }
+            } header: {
+                Label("Language", systemImage: "globe")
             }
         }
         .formStyle(.grouped)
@@ -1044,6 +1129,16 @@ struct ConnectionSettingsTab: View {
     @State private var codexDiagnostic: HookDiagnostic?
     @State private var isInstallingForProjects = false
     var knownCwds: [String]
+
+    // Codex 0.16x+ silently skips hooks that are not trusted in
+    // ~/.codex/config.toml (keys under [hooks.state.'...']). We can't
+    // verify the hash Codex computes, so absence of any trust entry is
+    // the only signal we can surface.
+    private var codexHooksNeedTrust: Bool {
+        let configPath = NSString(string: "~/.codex/config.toml").expandingTildeInPath
+        guard let content = try? String(contentsOfFile: configPath, encoding: .utf8) else { return true }
+        return !content.contains("hooks.state")
+    }
 
     init(ipcServer: IPCServer?, knownCwds: [String] = []) {
         self._ipcServer = ObservedObject(wrappedValue: ipcServer ?? IPCServer())
@@ -1152,6 +1247,18 @@ struct ConnectionSettingsTab: View {
                             HookStatusBadge(status: codexHookStatus)
                         }
                     }
+                }
+
+                // Codex 0.16x+ runs hooks only after the user trusts them.
+                // Untrusted hooks are skipped silently, so surface the
+                // approval step here — approving via /hooks or the Codex
+                // app's Settings > Hooks writes a trusted hash into
+                // ~/.codex/config.toml.
+                if case .installed = codexHookStatus, codexHooksNeedTrust {
+                    Label("Codex needs you to trust the updated hooks once: run /hooks in Codex, or approve in Codex Settings > Hooks. Session log watching keeps working meanwhile.",
+                          systemImage: "exclamationmark.triangle")
+                        .font(.caption)
+                        .foregroundStyle(.yellow)
                 }
             } header: {
                 Label("Agent Hook Status", systemImage: "terminal")
@@ -1432,8 +1539,29 @@ struct HookChecker {
 // MARK: - Hook Installer
 struct HookInstaller {
     static let glanceCommand = "claude-glance-reporter.sh"
-    static let claudeHookTypes = ["PreToolUse", "PostToolUse", "Notification", "Stop"]
-    static let codexHookTypes = ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification", "Stop", "SubagentStop"]
+    // Claude Code 2.x hook events relevant to session status. The full
+    // event list grew a lot (Setup, PostToolBatch, TaskCreated, ...);
+    // only events that map to a HUD state are installed.
+    static let claudeHookTypes = [
+        "SessionStart", "SessionEnd",
+        "UserPromptSubmit",
+        "PreToolUse", "PostToolUse", "PostToolUseFailure",
+        "PermissionRequest", "Notification",
+        "SubagentStart", "SubagentStop",
+        "PreCompact",
+        "Stop", "StopFailure"
+    ]
+    // Codex 0.16x hook events. Codex has no Notification event; it adds
+    // Interrupt (user cancelled the turn) and PermissionRequest.
+    static let codexHookTypes = [
+        "SessionStart", "SessionEnd",
+        "UserPromptSubmit",
+        "PreToolUse", "PostToolUse",
+        "PermissionRequest",
+        "SubagentStart", "SubagentStop",
+        "PreCompact",
+        "Stop", "Interrupt"
+    ]
 
     static func hookTypes(for platform: AgentPlatform) -> [String] {
         switch platform {

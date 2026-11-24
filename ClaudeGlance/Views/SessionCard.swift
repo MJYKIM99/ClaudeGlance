@@ -12,150 +12,111 @@ struct SessionCard: View {
     var isAnimating: Bool = true
     var onTap: (() -> Void)?
     var onDismiss: (() -> Void)?
+    var onFocusTerminal: (() -> Void)?
+    var onSetLabel: (() -> Void)?
+    var onRemoveLabel: (() -> Void)?
+    var onTogglePin: (() -> Void)?
 
     @State private var animatedStatus: SessionStatus = .idle
+    @State private var isHovering = false
+    @State private var pulse = false
+
+    private var needsAttention: Bool {
+        session.status == .waiting || session.status == .error
+    }
     @AppStorage("showToolHistory") private var showToolHistory: Bool = true
 
+    // 已完成/降级 idle 的会话用单行紧凑样式，少占空间
+    private var isCompact: Bool {
+        (session.status == .completed || session.status == .idle) && !session.isExpanded
+    }
+
+    private var statusEdgeColor: Color {
+        session.status == .error ? .red : .orange
+    }
+
+    private var platformColor: Color {
+        switch session.platform {
+        case .claudeCode: return .orange
+        case .codex: return .blue
+        }
+    }
+
     var body: some View {
-        VStack(spacing: 0) {
-            // 主卡片内容
-            HStack(spacing: 12) {
-                // 像素动画图标
-                PixelSpinner(status: animatedStatus, isAnimating: isAnimating)
-                    .frame(width: 32, height: 32)
+        HStack(spacing: 0) {
+            // 平台色左缘条
+            Rectangle()
+                // 需要操作时左缘条用状态色并呼吸脉冲，一眼可见
+                .fill(needsAttention ? statusEdgeColor.opacity(pulse ? 1 : 0.35) : platformColor.opacity(0.85))
+                .frame(width: 3)
+                .animation(
+                    needsAttention ? .easeInOut(duration: 1).repeatForever(autoreverses: true) : .default,
+                    value: pulse
+                )
 
-                VStack(alignment: .leading, spacing: 2) {
-                    // 主标题：当前动作
-                    if session.isStillThinking {
-                        Text("Still thinking...")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(.yellow.opacity(0.9))
-                            .lineLimit(1)
-                    } else if session.isStillWaiting {
-                        Text("Waiting for response...")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(.orange.opacity(0.9))
-                            .lineLimit(1)
-                    } else {
-                        Text(session.currentAction)
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundColor(.white)
-                            .lineLimit(1)
-                    }
-
-                    // 副标题：项目名 + 元数据
-                    HStack(spacing: 4) {
-                        Text(session.project)
-                            .font(.system(size: 11))
-                            .foregroundColor(.white.opacity(0.6))
-                            .underline(color: .white.opacity(0.2))
-                            .onTapGesture {
-                                NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: session.cwd)
-                            }
-                            .help(session.cwd)
-
-                        if !session.metadata.isEmpty && !session.isStillWaiting {
-                            Text("·")
-                                .foregroundColor(.white.opacity(0.4))
-                            Text(session.metadata)
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(.white.opacity(0.6))
-                                .lineLimit(1)
-                        }
-
-                        // 长时间思考时显示已用时间
-                        if session.isStillThinking {
-                            Text("·")
-                                .foregroundColor(.white.opacity(0.4))
-                            Text(formatElapsedTime(session.lastUpdate))
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(.yellow.opacity(0.7))
-                        }
-
-                        // 长时间等待时显示剩余时间
-                        if session.isStillWaiting, let remaining = session.waitingSecondsRemaining {
-                            Text("·")
-                                .foregroundColor(.white.opacity(0.4))
-                            Text("auto-hide in \(remaining)s")
-                                .font(.system(size: 11, design: .monospaced))
-                                .foregroundColor(.orange.opacity(0.7))
-                        }
-                    }
+            VStack(spacing: 0) {
+                if isCompact {
+                    compactRow
+                } else {
+                    fullRow
                 }
 
-                Spacer()
-
-                // Agent platform标识
-                PlatformBadge(platform: session.platform)
-
-                // 展开指示器
-                if showToolHistory && !session.toolHistory.isEmpty {
-                    Image(systemName: session.isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 10, weight: .medium))
-                        .foregroundColor(.white.opacity(0.4))
+                // 展开的详情面板
+                if showToolHistory && session.isExpanded && !session.toolHistory.isEmpty {
+                    ToolHistoryPanel(history: session.toolHistory)
+                        .transition(.asymmetric(
+                            insertion: .opacity.combined(with: .move(edge: .top)),
+                            removal: .opacity
+                        ))
                 }
-
-                // 终端标识
-                TerminalBadge(terminal: session.terminal)
-
-                // 关闭按钮（长时间思考或等待时显示）
-                if session.isStillThinking || session.isStillWaiting {
-                    Button(action: {
-                        onDismiss?()
-                    }) {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.system(size: 16))
-                            .foregroundColor(.white.opacity(0.4))
-                    }
-                    .buttonStyle(.plain)
-                    .help("Dismiss this session")
-                }
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                onTap?()
-            }
-
-            // 展开的详情面板
-            if showToolHistory && session.isExpanded && !session.toolHistory.isEmpty {
-                ToolHistoryPanel(history: session.toolHistory)
-                    .transition(.asymmetric(
-                        insertion: .opacity.combined(with: .move(edge: .top)),
-                        removal: .opacity
-                    ))
             }
         }
-        .background(
-            ZStack {
-                // 深色底层，确保在浅色背景下也有足够对比度
-                Color.black.opacity(0.4)
-                // 轻微的白色叠加
-                Color.white.opacity(0.03)
-            }
-        )
+        .background(Color.primary.opacity(isHovering ? 0.10 : 0.06))
+        .animation(.easeInOut(duration: 0.15), value: isHovering)
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .contentShape(Rectangle())
+        .onHover { isHovering = $0 }
+        .onAppear {
+            animatedStatus = session.status
+            if needsAttention { pulse = true }
+        }
+        .onChange(of: needsAttention) { _, now in
+            pulse = now
+        }
         .contextMenu {
-            Button("Copy Session ID") {
+            if let onTogglePin {
+                Button(session.pinned ? L10n.tr("Unpin from Top") : L10n.tr("Pin to Top")) { onTogglePin() }
+            }
+            if let onSetLabel {
+                Button(L10n.tr("Set Label...")) { onSetLabel() }
+            }
+            if session.label != nil, let onRemoveLabel {
+                Button(L10n.tr("Remove Label")) { onRemoveLabel() }
+            }
+            if let onFocusTerminal {
+                Divider()
+                Button(L10n.tr("Focus Terminal")) { onFocusTerminal() }
+                Divider()
+            }
+            Button(L10n.tr("Copy Session ID")) {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(session.id, forType: .string)
             }
-            Button("Copy Project Path") {
+            Button(L10n.tr("Copy Project Path")) {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(session.cwd, forType: .string)
             }
-            Button("Open in Finder") {
+            Button(L10n.tr("Open in Finder")) {
                 NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: session.cwd)
             }
             if !session.transcriptPath.isEmpty {
                 Divider()
-                Button("View Transcript") {
+                Button(L10n.tr("View Transcript")) {
                     NSWorkspace.shared.open(URL(fileURLWithPath: session.transcriptPath))
                 }
             }
             Divider()
-            Button("Dismiss") {
+            Button(L10n.tr("Dismiss")) {
                 onDismiss?()
             }
         }
@@ -165,9 +126,178 @@ struct SessionCard: View {
                 animatedStatus = newValue
             }
         }
-        .onAppear {
-            animatedStatus = session.status
+    }
+
+    // MARK: - Full row (active / waiting / error sessions)
+    private var fullRow: some View {
+        HStack(spacing: 12) {
+            // 像素动画图标
+            PixelSpinner(status: animatedStatus, isAnimating: isAnimating)
+                .frame(width: 32, height: 32)
+
+            VStack(alignment: .leading, spacing: 2) {
+                // 主标题：状态用彩色圆点表达，文字统一正文色（半透明背景上彩色文字看不清）
+                HStack(spacing: 6) {
+                    if session.pinned {
+                        Image(systemName: "pin.fill")
+                            .font(.system(size: 9))
+                            .foregroundStyle(.secondary)
+                    }
+                    if let label = session.label {
+                        Text(label)
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.accentColor.opacity(0.85))
+                            .clipShape(Capsule())
+                    }
+                    if session.isStillThinking {
+                        Circle().fill(.yellow).frame(width: 7, height: 7)
+                        Text(L10n.tr("Still thinking..."))
+                            .foregroundColor(.primary)
+                    } else if session.isStillWaiting {
+                        Circle().fill(.orange).frame(width: 7, height: 7)
+                        Text(L10n.tr("Waiting for response..."))
+                            .foregroundColor(.primary)
+                    } else {
+                        Text(session.currentAction)
+                            .foregroundColor(.primary)
+                    }
+                }
+                .font(.system(size: 13, weight: .medium))
+                .lineLimit(1)
+                // 截断时悬停显示完整内容
+                .help(session.isStillThinking ? "Still thinking..."
+                        : session.isStillWaiting ? "Waiting for response..."
+                        : session.currentAction)
+
+                // 副标题：项目名 + 元数据
+                HStack(spacing: 4) {
+                    Text(session.project)
+                        .font(.system(size: 11))
+                        .foregroundColor(.secondary)
+                        .underline(color: .secondary.opacity(0.3))
+                        .onTapGesture {
+                            NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: session.cwd)
+                        }
+                        .help(session.cwd)
+
+                    if !session.metadata.isEmpty && !session.isStillWaiting {
+                        Text("·")
+                            .foregroundStyle(.tertiary)
+                        Text(session.metadata)
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                            .help(session.metadata)
+                    }
+
+                    // 长时间思考时显示已用时间
+                    if session.isStillThinking {
+                        Text("·")
+                            .foregroundStyle(.tertiary)
+                        Text(formatElapsedTime(session.lastUpdate))
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                    }
+
+                    // 长时间等待时显示剩余时间
+                    if session.isStillWaiting, let remaining = session.waitingSecondsRemaining {
+                        Text("·")
+                            .foregroundStyle(.tertiary)
+                        Text(L10n.autoHideIn(remaining))
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+
+            Spacer()
+
+            // 展开指示器
+            if showToolHistory && !session.toolHistory.isEmpty {
+                Image(systemName: session.isExpanded ? "chevron.up" : "chevron.down")
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(.tertiary)
+            }
+
+            // 终端标识（点击聚焦终端）
+            TerminalBadge(terminal: session.terminal)
+                .onTapGesture {
+                    onFocusTerminal?()
+                }
+                .help(session.terminal + " — " + L10n.tr("Focus Terminal"))
+
+            // 关闭按钮（悬停时显示；长时间运行/等待的会话总是显示）
+            if isHovering || session.isStillThinking || session.isStillWaiting {
+                Button(action: {
+                    onDismiss?()
+                }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 16))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .help(L10n.tr("Dismiss this session"))
+            }
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 10)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onTap?()
+        }
+    }
+
+    // MARK: - Compact row (completed / idle sessions)
+    private var compactRow: some View {
+        HStack(spacing: 8) {
+            if session.pinned {
+                Image(systemName: "pin.fill")
+                    .font(.system(size: 9))
+                    .foregroundStyle(.secondary)
+            }
+            Image(systemName: session.status == .completed ? "checkmark.circle.fill" : "pause.circle")
+                .font(.system(size: 12))
+                .foregroundColor(session.status == .completed ? .green.opacity(0.8) : Color.secondary.opacity(0.7))
+
+            if let label = session.label {
+                Text(label)
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(.white)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 1)
+                    .background(Color.accentColor.opacity(0.85))
+                    .clipShape(Capsule())
+            }
+
+            Text(session.currentAction)
+                .font(.system(size: 12))
+                .foregroundColor(.secondary)
+                .lineLimit(1)
+                .help(session.currentAction)
+
+            Text(session.project)
+                .font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+
+            Spacer()
+
+            if isHovering {
+                Button(action: { onDismiss?() }) {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .help(L10n.tr("Dismiss this session"))
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .onTapGesture { onTap?() }
     }
 
     // 格式化经过的时间
@@ -190,9 +320,12 @@ struct ToolHistoryPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Divider()
-                .background(Color.white.opacity(0.1))
+                .background(Color.primary.opacity(0.08))
 
-            ForEach(history.suffix(5).reversed()) { event in
+            // 完整时间线：超过 ~8 条时内部滚动
+            ScrollView(.vertical, showsIndicators: history.count > 8) {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(history.reversed()) { event in
                 HStack(spacing: 8) {
                     // 工具图标
                     Image(systemName: iconForTool(event.tool))
@@ -203,28 +336,45 @@ struct ToolHistoryPanel: View {
                     // 工具名称
                     Text(event.tool)
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.7))
+                        .foregroundColor(.secondary)
 
                     // 目标
                     if !event.target.isEmpty {
                         Text(event.target)
                             .font(.system(size: 10, design: .monospaced))
-                            .foregroundColor(.white.opacity(0.4))
+                            .foregroundStyle(.tertiary)
                             .lineLimit(1)
+                            .help(event.target)
                     }
 
                     Spacer()
 
+                    // 状态标记（失败的工具显示出来）
+                    if event.status == .failed {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 9))
+                            .foregroundColor(.red.opacity(0.7))
+                    }
+
                     // 时间戳
                     Text(formatTime(event.timestamp))
                         .font(.system(size: 9, design: .monospaced))
-                        .foregroundColor(.white.opacity(0.3))
+                        .foregroundStyle(.tertiary)
                 }
+                    }
+                }
+            }
+            .frame(maxHeight: history.count > 8 ? 168 : nil, alignment: .top)
+
+            if history.count > 8 {
+                Text(L10n.historyCount(history.count))
+                    .font(.system(size: 9, design: .monospaced))
+                    .foregroundStyle(.tertiary)
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(Color.black.opacity(0.2))
+        .background(Color.primary.opacity(0.04))
     }
 
     private func iconForTool(_ tool: String) -> String {
@@ -284,9 +434,9 @@ struct PlatformBadge: View {
     var body: some View {
         Text(platform.badge)
             .font(.system(size: 9, weight: .bold, design: .monospaced))
-            .foregroundColor(badgeColor.opacity(0.88))
+            .foregroundColor(.white)
             .frame(width: 24, height: 22)
-            .background(badgeColor.opacity(0.15))
+            .background(badgeColor.opacity(0.85))
             .clipShape(RoundedRectangle(cornerRadius: 5))
             .help(platform.displayName)
     }
@@ -349,11 +499,12 @@ struct TerminalBadge: View {
     }
 
     var body: some View {
+        // 实心色块 + 白字：半透明 HUD 背景上清晰可读
         Text(abbreviation)
             .font(.system(size: 9, weight: .bold, design: .monospaced))
-            .foregroundColor(badgeColor.opacity(0.8))
+            .foregroundColor(.white)
             .frame(width: 22, height: 22)
-            .background(badgeColor.opacity(0.15))
+            .background(badgeColor.opacity(0.85))
             .clipShape(RoundedRectangle(cornerRadius: 5))
     }
 }
@@ -388,11 +539,36 @@ struct TerminalBadge: View {
             id: "3",
             terminal: "Terminal",
             project: "backend",
-            status: .writing,
-            currentAction: "Writing file",
-            metadata: "api.py"
+            status: .completed,
+            currentAction: "Task completed"
         ))
     }
     .padding()
     .background(Color.black)
+}
+
+// MARK: - Label Prompt
+/// 弹一个 NSAlert 让用户输入会话标签（HUD 是无边框 panel，不能挂 sheet，
+/// 用 runModal 独立弹窗）。
+enum SessionCardLabelPrompt {
+    static func ask(session: SessionState, completion: @escaping (String?) -> Void) {
+        NSApp.activate(ignoringOtherApps: true)
+
+        let alert = NSAlert()
+        alert.messageText = L10n.tr("Session Label")
+        alert.informativeText = session.project.isEmpty ? session.id : session.project
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: L10n.tr("Dismiss"))
+
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
+        field.stringValue = session.label ?? ""
+        field.placeholderString = L10n.tr("Session Label")
+        alert.accessoryView = field
+        alert.window.initialFirstResponder = field
+
+        if alert.runModal() == .alertFirstButtonReturn {
+            let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            completion(text.isEmpty ? nil : text)
+        }
+    }
 }

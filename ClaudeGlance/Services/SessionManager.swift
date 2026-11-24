@@ -260,12 +260,26 @@ class SessionManager: ObservableObject {
         switch message.event {
         case "SessionStart":
             session.status = .thinking
-            session.currentAction = "Starting session"
-            session.metadata = message.platform.displayName
+            session.currentAction = L10n.tr("Starting session")
+            session.metadata = message.data.model ?? message.platform.displayName
+
+        case "SessionEnd":
+            // The agent process is gone — remove the card immediately
+            // instead of waiting for a timeout.
+            sessions.removeValue(forKey: sessionKey)
+            sessionStopTimes.removeValue(forKey: sessionKey)
+            sessionStartTimes.removeValue(forKey: sessionKey)
+            updateActiveSessions()
+            return
+
+        case "SubagentStart":
+            session.status = .thinking
+            session.currentAction = L10n.tr("Spawning subagent")
+            session.metadata = message.data.agentType ?? ""
 
         case "UserPromptSubmit":
             session.status = .thinking
-            session.currentAction = "Reading request"
+            session.currentAction = L10n.tr("Reading request")
             session.metadata = formattedPrompt(message.data.prompt)
 
         case "PreToolUse":
@@ -330,10 +344,10 @@ class SessionManager: ObservableObject {
             let tool = toolName(from: message.data)
             let toolInput = toolInput(from: message.data)
             session.status = .thinking
-            session.currentAction = "Processing..."
+            session.currentAction = L10n.tr("Processing...")
 
             // 添加到历史
-            if session.toolHistory.count >= 10 {
+            if session.toolHistory.count >= 50 {
                 session.toolHistory.removeFirst()
             }
             session.toolHistory.append(ToolEvent(
@@ -342,8 +356,30 @@ class SessionManager: ObservableObject {
                 status: .completed
             ))
 
+        case "PostToolUseFailure":
+            // Claude Code 2.x fires this instead of PostToolUse when a
+            // tool call fails. The turn usually keeps going, so mark
+            // the event failed but keep the session in a working state.
+            let tool = toolName(from: message.data)
+            let toolInput = toolInput(from: message.data)
+            session.status = .thinking
+            session.currentAction = L10n.toolFailed(tool)
+            if session.toolHistory.count >= 50 {
+                session.toolHistory.removeFirst()
+            }
+            session.toolHistory.append(ToolEvent(
+                tool: tool,
+                target: formatMetadata(tool, toolInput),
+                status: .failed
+            ))
+
+        case "PreCompact", "PostCompact":
+            session.status = .thinking
+            session.currentAction = L10n.tr("Compacting context")
+            session.metadata = ""
+
         case "Notification", "PermissionRequest":
-            let notificationMessage = message.data.message ?? "Waiting for input"
+            let notificationMessage = message.data.message ?? L10n.tr("Waiting for input")
             let notificationType = message.data.notificationType ?? ""
 
             // 检测是否是错误通知
@@ -359,7 +395,7 @@ class SessionManager: ObservableObject {
 
                 // 错误时播放提示音
                 if previousStatus != .error {
-                    playNotificationSound(.attention, platform: message.platform)
+                    playNotificationSound(.attention, platform: message.platform, session: session)
                 }
             } else {
                 session.status = .waiting
@@ -368,14 +404,34 @@ class SessionManager: ObservableObject {
 
                 // 需要用户交互时播放提示音
                 if previousStatus != .waiting {
-                    playNotificationSound(.attention, platform: message.platform)
+                    playNotificationSound(.attention, platform: message.platform, session: session)
                 }
             }
 
         case "AgentMessage":
             session.status = .completed
-            session.currentAction = "Reporting update"
+            session.currentAction = L10n.tr("Reporting update")
             session.metadata = formattedPrompt(message.data.message)
+
+        case "StopFailure":
+            // The turn ended on an API error rather than normally
+            // (Claude Code 2.x distinct event from Stop).
+            let failureMessage = message.data.lastAssistantMessage
+                ?? message.data.error
+                ?? "Turn failed"
+            session.status = .error
+            session.currentAction = failureMessage
+            session.metadata = message.data.error ?? "Error"
+            if previousStatus != .error {
+                playNotificationSound(.attention, platform: message.platform, session: session)
+            }
+
+        case "Interrupt":
+            // Codex: user cancelled the current turn.
+            session.status = .completed
+            session.currentAction = L10n.tr("Interrupted")
+            session.metadata = ""
+            sessionStopTimes[sessionKey] = Date()
 
         case "Stop", "SubagentStop":
             // 检查是否是因为错误而停止
@@ -386,16 +442,16 @@ class SessionManager: ObservableObject {
 
             if isError {
                 session.status = .error
-                session.currentAction = stopMessage.isEmpty ? "Task failed" : stopMessage
+                session.currentAction = stopMessage.isEmpty ? L10n.tr("Task failed") : stopMessage
                 session.metadata = "Error"
 
                 if previousStatus != .error {
-                    playNotificationSound(.attention, platform: message.platform)
+                    playNotificationSound(.attention, platform: message.platform, session: session)
                 }
             } else {
                 // 一轮交互完成 - 显示完成状态，并记录 Stop 时间
                 session.status = .completed
-                session.currentAction = "Task completed"
+                session.currentAction = L10n.tr("Task completed")
                 session.metadata = ""
 
                 // 记录 Stop 时间，用于过滤后续的预测操作
@@ -412,7 +468,7 @@ class SessionManager: ObservableObject {
 
                 // 任务完成时播放提示音
                 if previousStatus != .completed {
-                    playNotificationSound(.completion, platform: message.platform)
+                    playNotificationSound(.completion, platform: message.platform, session: session)
                 }
             }
 
@@ -473,6 +529,28 @@ class SessionManager: ObservableObject {
     }
 
     // MARK: - Dismiss Session (手动关闭僵尸会话)
+    /// 收起所有展开的卡片
+    func collapseAll() {
+        var changed = false
+        for (id, session) in sessions where session.isExpanded {
+            var s = session
+            s.isExpanded = false
+            sessions[id] = s
+            changed = true
+        }
+        if changed { updateActiveSessions() }
+    }
+
+    /// 清除所有已完成/降级的会话，保留需要操作的
+    func dismissAll() {
+        let removeIds = sessions.keys.filter {
+            sessions[$0]?.status == .completed || sessions[$0]?.status == .idle
+        }
+        guard !removeIds.isEmpty else { return }
+        for id in removeIds { sessions.removeValue(forKey: id) }
+        updateActiveSessions()
+    }
+
     func dismissSession(sessionId: String) {
         sessions.removeValue(forKey: sessionId)
         sessionStopTimes.removeValue(forKey: sessionId)
@@ -487,7 +565,7 @@ class SessionManager: ObservableObject {
         case completion  // 任务完成
     }
 
-    private func playNotificationSound(_ type: NotificationSoundType, platform: AgentPlatform = .claudeCode) {
+    private func playNotificationSound(_ type: NotificationSoundType, platform: AgentPlatform = .claudeCode, session: SessionState? = nil) {
         // 同类型通知 10 秒内不重复
         let now = Date()
         if let last = lastNotificationTime[type], now.timeIntervalSince(last) < 10 {
@@ -515,15 +593,23 @@ class SessionManager: ObservableObject {
         // macOS Notification Center
         if UserDefaults.standard.bool(forKey: Defaults.notificationsEnabled) {
             let content = UNMutableNotificationContent()
+            // 带上会话上下文：通知正文显示项目+当前动作，点击可跳回终端
+            if let session {
+                content.userInfo["sessionKey"] = session.id
+                content.subtitle = session.project
+            }
             switch type {
             case .attention:
                 content.title = "\(platform.shortName) Needs Input"
-                content.body = "A \(platform.displayName) session is waiting for your response"
+                content.body = session?.currentAction
+                    ?? "A \(platform.displayName) session is waiting for your response"
             case .completion:
                 content.title = "\(platform.shortName) Completed"
-                content.body = "A \(platform.displayName) session finished its task"
+                content.body = session?.currentAction
+                    ?? "A \(platform.displayName) session finished its task"
             }
-            let notificationId = "\(platform.rawValue)-\(type == .attention ? "attention" : "completion")"
+            // 每个会话独立 identifier，避免不同会话互相覆盖
+            let notificationId = "\(session?.id ?? platform.rawValue)-\(type == .attention ? "attention" : "completion")"
             let request = UNNotificationRequest(
                 identifier: notificationId,
                 content: content,
@@ -561,50 +647,50 @@ class SessionManager: ObservableObject {
     private func formatAction(_ tool: String, _ input: [String: AnyCodableValue]?) -> String {
         switch tool {
         case "Read":
-            return "Reading file"
+            return L10n.tr("Reading file")
         case "Write":
-            return "Writing file"
+            return L10n.tr("Writing file")
         case "Edit":
-            return "Editing file"
+            return L10n.tr("Editing file")
         case "Bash":
             if let desc = input?["description"]?.stringValue, !desc.isEmpty {
                 return desc
             }
-            return "Running command"
+            return L10n.tr("Running command")
         case "Glob":
-            return "Searching files"
+            return L10n.tr("Searching files")
         case "Grep":
-            return "Searching content"
+            return L10n.tr("Searching content")
         case "Task":
             if let subtype = input?["subagent_type"]?.stringValue {
                 return "Agent: \(subtype)"
             }
-            return "Spawning agent"
+            return L10n.tr("Spawning agent")
         case "WebFetch":
-            return "Fetching web"
+            return L10n.tr("Fetching web")
         case "WebSearch":
-            return "Searching web"
+            return L10n.tr("Searching web")
         case "TodoWrite":
-            return "Updating todos"
+            return L10n.tr("Updating todos")
         case "NotebookEdit":
-            return "Editing notebook"
+            return L10n.tr("Editing notebook")
         case "exec_command", "functions.exec_command":
             if let cmd = input?["cmd"]?.stringValue, !cmd.isEmpty {
-                return cmd.count > 40 ? "Running command" : cmd
+                return cmd.count > 40 ? L10n.tr("Running command") : cmd
             }
-            return "Running command"
+            return L10n.tr("Running command")
         case "write_stdin", "functions.write_stdin":
-            return "Continuing command"
+            return L10n.tr("Continuing command")
         case "apply_patch", "functions.apply_patch":
-            return "Applying patch"
+            return L10n.tr("Applying patch")
         case "update_plan", "functions.update_plan":
-            return "Updating plan"
+            return L10n.tr("Updating plan")
         case "web_search_call", "web.run":
-            return "Searching web"
+            return L10n.tr("Searching web")
         case "imagegen", "image_gen":
-            return "Generating image"
+            return L10n.tr("Generating image")
         case "request_user_input", "functions.request_user_input":
-            return "Requesting input"
+            return L10n.tr("Requesting input")
         default:
             return tool
         }
@@ -663,6 +749,66 @@ class SessionManager: ObservableObject {
         return ""
     }
 
+    // MARK: - Label & Pin
+    func setLabel(_ label: String?, for sessionId: String) {
+        guard var session = sessions[sessionId] else { return }
+        let trimmed = label?.trimmingCharacters(in: .whitespacesAndNewlines)
+        session.label = (trimmed?.isEmpty == false) ? trimmed : nil
+        sessions[sessionId] = session
+        updateActiveSessions()
+    }
+
+    func togglePin(sessionId: String) {
+        guard var session = sessions[sessionId] else { return }
+        session.pinned.toggle()
+        sessions[sessionId] = session
+        updateActiveSessions()
+    }
+
+    /// 通知点击等外部入口：按 sessionKey 聚焦终端
+    func focusTerminal(sessionId: String) {
+        guard let session = sessions[sessionId] else { return }
+        focusTerminal(for: session)
+    }
+
+    // MARK: - Focus Terminal
+    /// Bring the terminal app that owns this session to the front.
+    /// `session.terminal` carries $TERM_PROGRAM (Apple_Terminal,
+    /// iTerm.app, vscode, WezTerm, ghostty, ...) or "Codex".
+    func focusTerminal(for session: SessionState) {
+        let name = session.terminal.lowercased()
+        let appName: String?
+        switch name {
+        case let t where t.contains("iterm"): appName = "iTerm2"
+        case let t where t.contains("apple_terminal") || t == "terminal": appName = "Terminal"
+        case let t where t.contains("warp"): appName = "Warp"
+        case let t where t.contains("wezterm"): appName = "WezTerm"
+        case let t where t.contains("ghostty"): appName = "Ghostty"
+        case let t where t.contains("alacritty"): appName = "Alacritty"
+        case let t where t.contains("kitty"): appName = "kitty"
+        case let t where t.contains("hyper"): appName = "Hyper"
+        case let t where t.contains("cursor"): appName = "Cursor"
+        case let t where t.contains("zed"): appName = "Zed"
+        case let t where t.contains("vscode") || t.contains("code"): appName = "Visual Studio Code"
+        case "codex": appName = nil  // Codex 会话的终端未知
+        default: appName = nil
+        }
+
+        if let appName {
+            if let running = NSWorkspace.shared.runningApplications.first(where: {
+                $0.localizedName?.caseInsensitiveCompare(appName) == .orderedSame
+            }) {
+                running.activate(options: [.activateAllWindows])
+                return
+            }
+            // App not running under that name — try `open -a`
+            let task = Process()
+            task.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            task.arguments = ["-a", appName]
+            try? task.run()
+        }
+    }
+
     private func normalizedTerminal(for message: HookMessage) -> String {
         if message.platform == .codex {
             return message.terminal.isEmpty || message.terminal == "Terminal" ? "Codex" : message.terminal
@@ -711,20 +857,26 @@ class SessionManager: ObservableObject {
                 if elapsed > SessionState.activeTimeout {
                     var updatedSession = session
                     updatedSession.status = .completed
-                    updatedSession.currentAction = "Task completed"
+                    updatedSession.currentAction = L10n.tr("Task completed")
                     updatedSession.metadata = ""
                     updatedSession.lastUpdate = now  // 重置时间，让它再过 completedTimeout 秒后消失
                     promotedToCompleted.append((key, updatedSession))
                     AppLog.session.debug("Auto-completed stale session: \(key)")
 
                     // 播放完成提示音
-                    playNotificationSound(.completion, platform: session.platform)
+                    playNotificationSound(.completion, platform: session.platform, session: session)
                 }
             }
-            // 对于 waiting 状态，waitingTimeout 秒后移除
+            // 对于 waiting 状态，waitingTimeout 秒后降级为 idle 保留
+            // （用户可能离开几分钟才回来，直接删除会丢掉“需要操作”的会话）
             else if session.status == .waiting {
                 if elapsed > SessionState.waitingTimeout {
-                    sessionsToRemove.append(key)
+                    var updatedSession = session
+                    updatedSession.status = .idle
+                    updatedSession.currentAction = L10n.tr("Idle (waiting for input)")
+                    updatedSession.metadata = ""
+                    updatedSession.lastUpdate = now
+                    promotedToCompleted.append((key, updatedSession))
                 }
             }
         }
@@ -745,7 +897,12 @@ class SessionManager: ObservableObject {
     private func updateActiveSessions() {
         activeSessions = sessions.values
             .filter { $0.isActive && $0.isReadyToDisplay }
-            .sorted { $0.lastUpdate > $1.lastUpdate }
+            .sorted { a, b in
+                // Sessions needing a human (error/waiting) pin to the top;
+                // within a rank, most recently updated first.
+                if a.displayRank != b.displayRank { return a.displayRank < b.displayRank }
+                return a.lastUpdate > b.lastUpdate
+            }
 
         // 检查是否需要启动/停止 fadeTimer
         updateFadeTimerState()
@@ -765,7 +922,7 @@ class SessionManager: ObservableObject {
             project: "ClaudeGlance",
             cwd: "/Users/yi/Documents/code",
             status: .thinking,
-            currentAction: "Reading file",
+            currentAction: L10n.tr("Reading file"),
             metadata: "SessionManager.swift"
         )
         sessions[session.id] = session

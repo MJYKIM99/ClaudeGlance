@@ -46,6 +46,11 @@ struct SessionState: Identifiable, Codable {
     var isExpanded: Bool = false
     var transcriptPath: String = ""
 
+    // 用户自定义标签（右键设置，仅内存保留）
+    var label: String? = nil
+    // 置顶：不被优先级排序挤下去
+    var pinned: Bool = false
+
     // 延迟显示：新会话需要等待一段时间才显示（过滤快速的预测操作）
     var displayAfter: Date = Date()
 
@@ -58,6 +63,7 @@ struct SessionState: Identifiable, Codable {
     // them by name.
     static let completedTimeout: TimeInterval = 5         // completed/error 状态 5 秒后移除
     static let waitingTimeout: TimeInterval = 90          // waiting 状态 90 秒后自动视为结束
+    static let idleTimeout: TimeInterval = 600            // idle(降级后的 waiting) 保留 10 分钟
     static let activeTimeout: TimeInterval = 60           // thinking/reading/writing 60s 无更新 → 视为完成
     static let longOperationThreshold: TimeInterval = 30  // 超过 30 秒视为长时间操作（"Still thinking..."）
     /// Window after a `Stop` event during which incoming `PreToolUse`
@@ -93,7 +99,22 @@ struct SessionState: Identifiable, Codable {
             // 工作状态保持 activeTimeout 秒（Claude 可能在长时间思考）
             return elapsed < Self.activeTimeout
         case .idle:
-            return elapsed < Self.completedTimeout
+            // Downgraded waiting sessions linger so the user still sees
+            // them when they come back — dismiss or SessionEnd clears.
+            return elapsed < Self.idleTimeout
+        }
+    }
+
+    /// Display priority: pinned sessions always first, then sessions
+    /// needing a human.
+    var displayRank: Int {
+        if pinned { return -1 }
+        switch status {
+        case .error: return 0
+        case .waiting: return 1
+        case .thinking, .reading, .writing: return 2
+        case .idle: return 3
+        case .completed: return 4
         }
     }
 
@@ -227,6 +248,17 @@ struct ClaudeHookData: Codable {
     let prompt: String?
     let status: String?
 
+    // Claude Code 2.x / Codex 0.16x fields
+    let source: String?              // SessionStart: startup/resume/clear/compact/fork
+    let reason: String?              // SessionEnd / Interrupt reason
+    let error: String?               // StopFailure / PostToolUseFailure error kind
+    let lastAssistantMessage: String?  // StopFailure last assistant text
+    let turnId: String?              // Codex turn-scoped events
+    let model: String?               // Codex payload model
+    let permissionMode: String?      // permission_mode
+    let agentType: String?           // SubagentStart/SubagentStop agent type
+    let toolUseId: String?           // tool_use_id
+
     enum CodingKeys: String, CodingKey {
         case sessionId = "session_id"
         case transcriptPath = "transcript_path"
@@ -240,6 +272,15 @@ struct ClaudeHookData: Codable {
         case notificationType = "notification_type"
         case prompt
         case status
+        case source
+        case reason
+        case error
+        case lastAssistantMessage = "last_assistant_message"
+        case turnId = "turn_id"
+        case model
+        case permissionMode = "permission_mode"
+        case agentType = "agent_type"
+        case toolUseId = "tool_use_id"
     }
 
     init(from decoder: Decoder) throws {
@@ -256,6 +297,15 @@ struct ClaudeHookData: Codable {
         notificationType = try container.decodeIfPresent(String.self, forKey: .notificationType)
         prompt = try container.decodeIfPresent(String.self, forKey: .prompt)
         status = try container.decodeIfPresent(String.self, forKey: .status)
+        source = try container.decodeIfPresent(String.self, forKey: .source)
+        reason = try container.decodeIfPresent(String.self, forKey: .reason)
+        error = try container.decodeIfPresent(String.self, forKey: .error)
+        lastAssistantMessage = try container.decodeIfPresent(String.self, forKey: .lastAssistantMessage)
+        turnId = try container.decodeIfPresent(String.self, forKey: .turnId)
+        model = try container.decodeIfPresent(String.self, forKey: .model)
+        permissionMode = try container.decodeIfPresent(String.self, forKey: .permissionMode)
+        agentType = try container.decodeIfPresent(String.self, forKey: .agentType)
+        toolUseId = try container.decodeIfPresent(String.self, forKey: .toolUseId)
     }
 }
 
